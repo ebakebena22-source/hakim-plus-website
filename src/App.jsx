@@ -451,22 +451,26 @@ export default function DiasporaPharmacyLandingPage() {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setSubmitState("loading");
-    setSubmitMessage("Saving your request before opening WhatsApp...");
+ async function handleSubmit(event) {
+  event.preventDefault();
 
-    try {
-      await submitRequestToBackend(form);
-      setSubmitState("success");
-      setSubmitMessage("Request captured. WhatsApp will open with your details.");
-      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
-    } catch (error) {
-      setSubmitState("error");
-      setSubmitMessage(error.message || "Could not save request. WhatsApp will still open.");
-      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
-    }
+  // Open WhatsApp FIRST (this avoids browser blocking)
+  const newWindow = window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+
+  setSubmitState("loading");
+  setSubmitMessage("Saving your request...");
+
+  try {
+    await submitRequestToBackend(form);
+
+    setSubmitState("success");
+    setSubmitMessage("Request saved successfully.");
+  } catch (error) {
+    console.log(error);
+    setSubmitState("error");
+    setSubmitMessage("Saved may have failed, but your request was sent.");
   }
+}
 
   return (
     <main className="min-h-screen scroll-smooth bg-slate-50 text-slate-900" style={{ fontFamily: bodyFont, letterSpacing: "-0.01em" }}>
