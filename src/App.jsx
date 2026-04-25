@@ -836,16 +836,16 @@ export default function DiasporaPharmacyLandingPage() {
             <div className="mb-5 grid gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-xs font-semibold text-slate-400">Your name</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" />
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" required/>
               </div>
               <div>
                 <label className="mb-2 block text-xs font-semibold text-slate-400">Country</label>
-                <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" />
+                <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" required/>
               </div>
             </div>
             <div className="mb-5">
               <label className="mb-2 block text-xs font-semibold text-slate-400">WhatsApp number</label>
-              <input type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." />
+              <input type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." required/>
             </div>
             <div className="mb-6">
               <label className="mb-2 block text-xs font-semibold text-slate-400">Request details</label>
