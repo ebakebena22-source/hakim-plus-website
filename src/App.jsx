@@ -491,7 +491,6 @@ export default function DiasporaPharmacyLandingPage() {
             <a href="#services" className="transition-colors duration-300 hover:text-slate-950">Services</a>
             <a href="#pricing" className="transition-colors duration-300 hover:text-slate-950">Plans</a>
             <a href="#contact" className="transition-colors duration-300 hover:text-slate-950">Start request</a>
-            <a href="#testimonials" className="transition-colors duration-300 hover:text-slate-950">Testimonials</a>
             <a href="#faq" className="transition-colors duration-300 hover:text-slate-950">FAQ</a>
           </div>
           <div className="hidden md:block">
@@ -836,16 +835,16 @@ export default function DiasporaPharmacyLandingPage() {
             <div className="mb-5 grid gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-xs font-semibold text-slate-400">Your name</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" required/>
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" />
               </div>
               <div>
                 <label className="mb-2 block text-xs font-semibold text-slate-400">Country</label>
-                <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" required/>
+                <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" />
               </div>
             </div>
             <div className="mb-5">
               <label className="mb-2 block text-xs font-semibold text-slate-400">WhatsApp number</label>
-              <input type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." required/>
+              <input type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." />
             </div>
             <div className="mb-6">
               <label className="mb-2 block text-xs font-semibold text-slate-400">Request details</label>
@@ -863,48 +862,6 @@ export default function DiasporaPharmacyLandingPage() {
             <p className="mt-4 text-[11px] text-slate-500">Not for emergencies. Visit a health facility for urgent care.</p>
           </form>
         </motion.div>
-      </section>
-
-      <section id="testimonials" className="relative overflow-hidden bg-slate-950 px-5 py-16 text-white md:py-24">
-        <div className="absolute left-1/2 top-0 h-[420px] w-[420px] -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl" />
-        <div className="relative mx-auto max-w-7xl">
-          <motion.div className="mx-auto max-w-3xl text-center" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.25 }} variants={fadeUp} transition={smoothTransition}>
-            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">Testimonials</p>
-            <h2 className="text-3xl font-semibold md:text-5xl" style={{ fontFamily: headingFont, letterSpacing: "-0.03em", lineHeight: 1.05 }}>
-              Families abroad need proof, not promises.
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-slate-300 md:mt-5 md:text-base md:leading-7">
-              Short stories from diaspora customers using Hakim Plus to support relatives in Ethiopia with more control and less uncertainty.
-            </p>
-          </motion.div>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-3 text-xs font-semibold text-slate-300">
-            <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2">16K+ fulfilled orders</div>
-            <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Proof after delivery</div>
-            <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Chronic care support</div>
-          </div>
-        </div>
-        <div className="relative mx-auto mt-10 max-w-7xl overflow-hidden md:mt-14">
-          <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-r from-slate-950 to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-slate-950 to-transparent" />
-          <motion.div className="flex gap-6" animate={{ x: [0, -1600] }} transition={{ repeat: Infinity, duration: 44, ease: "linear" }}>
-            {[...testimonials, ...testimonials].map((item, index) => (
-              <motion.div key={`${item.name}-${index}`} whileHover={{ y: -5, scale: 1.01 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }} className="min-w-[280px] rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/10 backdrop-blur md:min-w-[420px] md:p-6">
-                <div className="mb-6 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <img src={item.image} alt={`${item.name} profile`} className="h-16 w-16 rounded-full object-cover ring-4 ring-emerald-400/20" />
-                    <div>
-                      <p className="text-sm font-semibold text-white">{item.name}</p>
-                      <p className="text-xs text-slate-400">Diaspora customer · {item.location}</p>
-                    </div>
-                  </div>
-                  <div className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">{item.tag}</div>
-                </div>
-                <RatingStars rating={item.rating} />
-                <p className="text-base leading-7 text-slate-100">“{item.text}”</p>
-              </motion.div>
-            ))}
-          </motion.div>
-        </div>
       </section>
 
       
