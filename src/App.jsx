@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { Analytics } from "@vercel/analytics/react";
 
 function Icon({ name, size = 22, className = "" }) {
   const common = {
@@ -970,6 +971,7 @@ export default function DiasporaPharmacyLandingPage() {
             <p>Licensed by EFDA</p>
             <p>Medicine verification · Payment request · Delivery proof</p>
           </div>
+          <Analytics />
         </div>
       </footer>
     </main>
