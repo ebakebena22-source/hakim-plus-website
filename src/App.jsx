@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Analytics } from "@vercel/analytics/react";
 
+const trackMetaEvent = (eventName, params = {}) => {
+  if (typeof window !== "undefined" && window.fbq) {
+    window.fbq("trackCustom", eventName, params);
+  }
+};
+
 function Icon({ name, size = 22, className = "" }) {
   const common = {
     width: size,
@@ -454,6 +460,10 @@ export default function DiasporaPharmacyLandingPage() {
 
  async function handleSubmit(event) {
   event.preventDefault();
+  trackMetaEvent("FormSubmission", {
+  source: "Request Form",
+  country: form.country || "Unknown",
+});
 
   // Open WhatsApp FIRST (this avoids browser blocking)
   const newWindow = window.open(whatsappUrl, "_blank", "noopener,noreferrer");
@@ -495,7 +505,11 @@ export default function DiasporaPharmacyLandingPage() {
             <a href="#faq" className="transition-colors duration-300 hover:text-slate-950">FAQ</a>
           </div>
           <div className="hidden md:block">
-            <Button href={whatsappUrl} external>WhatsApp (+251971818802)</Button>
+            <Button href={whatsappUrl} external onClick={() =>
+  trackMetaEvent("WhatsAppClick", {
+    source: "Hero CTA",
+  })
+}>WhatsApp (+251971818802)</Button>
           </div>
           <a
             href={whatsappUrl}
@@ -503,6 +517,11 @@ export default function DiasporaPharmacyLandingPage() {
             rel="noopener noreferrer"
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 md:hidden"
             aria-label="Open WhatsApp"
+            onClick={() =>
+  trackMetaEvent("WhatsAppClick", {
+    source: "Hero CTA",
+  })
+}
           >
             <Icon name="chat" size={19} />
           </a>
@@ -533,7 +552,11 @@ export default function DiasporaPharmacyLandingPage() {
             <div className="mt-7 grid gap-3 sm:flex sm:flex-row">
               <Button href="#contact">Start a medicine request <Icon name="arrow" size={18} /></Button>
               <Button href="#how" variant="secondary">See how it works</Button>
-              <Button href={whatsappUrl} external variant="secondary">
+              <Button href={whatsappUrl} external variant="secondary" onClick={() =>
+  trackMetaEvent("WhatsAppClick", {
+    source: "Hero CTA",
+  })
+}>
                 WhatsApp (+251971818802) <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -827,7 +850,11 @@ export default function DiasporaPharmacyLandingPage() {
                   <p className="text-sm font-semibold text-white">+251-971-81-8802</p>
                 </div>
               </div>
-              <Button href={whatsappUrl} external className="mt-4 w-full">
+              <Button href={whatsappUrl} external className="mt-4 w-full" onClick={() =>
+  trackMetaEvent("WhatsAppClick", {
+    source: "Hero CTA",
+  })
+}>
                 Chat on WhatsApp <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -946,7 +973,11 @@ export default function DiasporaPharmacyLandingPage() {
                 <span>Proof sent after delivery</span>
               </div>
             </div>
-            <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary">
+            <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary" onClick={() =>
+  trackMetaEvent("WhatsAppClick", {
+    source: "Hero CTA",
+  })
+}>
               WhatsApp (+251971818802) <Icon name="chat" size={18} />
             </Button>
           </motion.div>
