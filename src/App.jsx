@@ -6,7 +6,7 @@ const trackMetaEvent = (eventName, params = {}) => {
   console.log("Meta event:", eventName, params);
 
   if (typeof window !== "undefined" && typeof window.fbq === "function") {
-    window.fbq("trackCustom", eventName, params);
+    window.fbq("track", eventName, params);
   }
 };
 
@@ -389,7 +389,15 @@ function runSelfTests() {
 
 runSelfTests();
 
-function Button({ children, variant = "primary", className = "", href, type = "button", external = false, onClick }) {
+function Button({
+  children,
+  variant = "primary",
+  className = "",
+  href,
+  type = "button",
+  external = false,
+  onClick,
+}) {
   const base = "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-4 focus:ring-emerald-500/20";
   const styles =
     variant === "primary"
@@ -399,16 +407,22 @@ function Button({ children, variant = "primary", className = "", href, type = "b
 
   if (href) {
     return (
-      <a href={href} className={classes} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined}>
-        {children}
-      </a>
+      <a
+  href={href}
+  className={classes}
+  target={external ? "_blank" : undefined}
+  rel={external ? "noopener noreferrer" : undefined}
+  onClick={onClick}
+>
+  {children}
+</a>
     );
   }
 
   return (
-    <button type={type} className={classes}>
-      {children}
-    </button>
+    <button type={type} className={classes} onClick={onClick}>
+  {children}
+</button>
   );
 }
 
@@ -462,7 +476,7 @@ export default function DiasporaPharmacyLandingPage() {
 
  async function handleSubmit(event) {
   event.preventDefault();
-  trackMetaEvent("FormSubmission", {
+  trackMetaEvent("Lead", {
   source: "Request Form",
   country: form.country || "Unknown",
 });
@@ -509,10 +523,10 @@ export default function DiasporaPharmacyLandingPage() {
           <div className="hidden md:block">
             <Button href={whatsappUrl} external 
             onClick={() =>
-  trackMetaEvent("WhatsAppClick", {
-    source: "Hero CTA",
-  })
-}>WhatsApp (+251971818802)</Button>
+    trackMetaEvent("Contact", {
+      source: "Hero WhatsApp",
+    })
+  }>WhatsApp (+251971818802)</Button>
           </div>
           <a
             href={whatsappUrl}
@@ -521,10 +535,10 @@ export default function DiasporaPharmacyLandingPage() {
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 md:hidden"
             aria-label="Open WhatsApp"
             onClick={() =>
-  trackMetaEvent("WhatsAppClick", {
-    source: "Hero CTA",
-  })
-}
+    trackMetaEvent("Contact", {
+      source: "Hero WhatsApp",
+    })
+  }
           >
             <Icon name="chat" size={19} />
           </a>
@@ -556,10 +570,10 @@ export default function DiasporaPharmacyLandingPage() {
               <Button href="#contact">Start a medicine request <Icon name="arrow" size={18} /></Button>
               <Button href="#how" variant="secondary">See how it works</Button>
               <Button href={whatsappUrl} external variant="secondary" onClick={() =>
-  trackMetaEvent("WhatsAppClick", {
-    source: "Hero CTA",
-  })
-}>
+    trackMetaEvent("Contact", {
+      source: "Hero WhatsApp",
+    })
+  }>
                 WhatsApp (+251971818802) <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -854,10 +868,10 @@ export default function DiasporaPharmacyLandingPage() {
                 </div>
               </div>
               <Button href={whatsappUrl} external className="mt-4 w-full" onClick={() =>
-  trackMetaEvent("WhatsAppClick", {
-    source: "Hero CTA",
-  })
-}>
+    trackMetaEvent("Contact", {
+      source: "Hero WhatsApp",
+    })
+  }>
                 Chat on WhatsApp <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -977,10 +991,10 @@ export default function DiasporaPharmacyLandingPage() {
               </div>
             </div>
             <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary" onClick={() =>
-  trackMetaEvent("WhatsAppClick", {
-    source: "Hero CTA",
-  })
-}>
+    trackMetaEvent("Contact", {
+      source: "Hero WhatsApp",
+    })
+  }>
               WhatsApp (+251971818802) <Icon name="chat" size={18} />
             </Button>
           </motion.div>
