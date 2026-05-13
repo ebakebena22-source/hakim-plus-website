@@ -507,7 +507,8 @@ export default function DiasporaPharmacyLandingPage() {
             <a href="#faq" className="transition-colors duration-300 hover:text-slate-950">FAQ</a>
           </div>
           <div className="hidden md:block">
-            <Button href={whatsappUrl} external onClick={() =>
+            <Button href={whatsappUrl} external 
+            onClick={() =>
   trackMetaEvent("WhatsAppClick", {
     source: "Hero CTA",
   })
