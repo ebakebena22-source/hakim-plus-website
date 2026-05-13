@@ -389,7 +389,7 @@ function runSelfTests() {
 
 runSelfTests();
 
-function Button({ children, variant = "primary", className = "", href, type = "button", external = false }) {
+function Button({ children, variant = "primary", className = "", href, type = "button", external = false, onClick }) {
   const base = "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-4 focus:ring-emerald-500/20";
   const styles =
     variant === "primary"
