@@ -3,7 +3,9 @@ import { motion } from "framer-motion";
 import { Analytics } from "@vercel/analytics/react";
 
 const trackMetaEvent = (eventName, params = {}) => {
-  if (typeof window !== "undefined" && window.fbq) {
+  console.log("Meta event:", eventName, params);
+
+  if (typeof window !== "undefined" && typeof window.fbq === "function") {
     window.fbq("trackCustom", eventName, params);
   }
 };
