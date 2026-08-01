@@ -58,7 +58,9 @@ async function callAuth(req, endpoint, options = {}) {
   if (!baseUrl) throw Object.assign(new Error("Authentication is not configured."), { status: 503 });
   const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) };
   if (req.headers.cookie) headers.Cookie = req.headers.cookie;
-  if (req.headers.origin) headers.Origin = req.headers.origin;
+  // This request is a trusted server-to-server hop. Forwarding the browser's
+  // custom-domain Origin makes the managed auth service treat the proxy as a
+  // direct cross-origin client and reject valid signups.
   return fetch(`${baseUrl}${endpoint}`, { method: options.method || "GET", headers, body: options.body ? JSON.stringify(options.body) : undefined, redirect: "manual" });
 }
 
