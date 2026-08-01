@@ -276,7 +276,8 @@ async function audit(actorId, eventType, targetType, targetId, metadata = {}) {
 export default async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
-    const path = url.pathname.replace(/^\/api\/v1\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+    const routedPath = url.searchParams.get("path");
+    const path = (routedPath || url.pathname.replace(/^\/api\/v1\/?/, "")).split("/").filter(Boolean).map(decodeURIComponent);
     if (path[0] === "health") return send(res, 200, { ok: true, database: Boolean(connectionString), auth: Boolean(authBaseUrl()), privateStorage: Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) });
     if (path[0] === "auth") return handleAuth(req, res, path[1]);
     await ensureSchema();
