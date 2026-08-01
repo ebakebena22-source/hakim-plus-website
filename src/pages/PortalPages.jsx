@@ -1,4 +1,9 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { beneficiariesApi } from "../api/beneficiaries";
+import { notificationsApi } from "../api/notifications";
+import { ordersApi } from "../api/orders";
+import { requestsApi } from "../api/requests";
 import { useAuth } from "../auth/AuthContext";
 
 const pagePadding = "px-5 py-8 sm:px-8 lg:px-10 lg:py-10";
@@ -6,23 +11,39 @@ const pagePadding = "px-5 py-8 sm:px-8 lg:px-10 lg:py-10";
 export function DashboardPage() {
   const { user } = useAuth();
   const firstName = user?.profile?.firstName || user?.firstName || "there";
+  const [state, setState] = useState({ status: "loading", beneficiaries: [], requests: [], orders: [], notifications: [], error: "" });
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([beneficiariesApi.list(), requestsApi.list(), ordersApi.list({ view: "active" }), notificationsApi.list()])
+      .then(([beneficiariesResult, requestsResult, ordersResult, notificationsResult]) => {
+        if (!active) return;
+        setState({ status: "ready", beneficiaries: beneficiariesResult.beneficiaries || [], requests: requestsResult.requests || [], orders: ordersResult.orders || [], notifications: notificationsResult.notifications || [], error: "" });
+      })
+      .catch((error) => { if (active) setState((current) => ({ ...current, status: "error", error: error.message })); });
+    return () => { active = false; };
+  }, []);
+
+  const actionRequests = state.requests.filter((request) => request.actionRequired);
+  const unreadNotifications = state.notifications.filter((notification) => !notification.readAt);
+  const recentActivity = state.notifications.slice(0, 3);
   return (
     <main className={pagePadding}>
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div><p className="text-sm font-bold text-emerald-700">Customer dashboard</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Welcome back, {firstName}</h1><p className="mt-3 text-sm text-slate-600">See what needs your attention and what Hakim Plus is working on.</p></div>
         <Link className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white" to="/dashboard/requests/new">New medication request</Link>
       </div>
+      {state.error && <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">{state.error}</div>}
       <section className="mt-8 rounded-[2rem] border border-amber-200 bg-amber-50 p-6">
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-800">Action required</p>
-        <h2 className="mt-3 text-xl font-bold text-amber-950">Nothing needs your attention</h2>
-        <p className="mt-2 text-sm text-amber-900">Quotes, payment requests, and information requests will appear here.</p>
+        {state.status === "loading" ? <p className="mt-3 text-sm font-semibold text-amber-900" role="status">Checking your account…</p> : actionRequests.length || unreadNotifications.length ? <><h2 className="mt-3 text-xl font-bold text-amber-950">{actionRequests.length + unreadNotifications.length} update(s) need your attention</h2><div className="mt-4 flex flex-wrap gap-3">{actionRequests.length > 0 && <Link className="rounded-xl bg-amber-900 px-4 py-2 text-sm font-bold text-white" to="/dashboard/requests?status=needs_action">Review requests</Link>}{unreadNotifications.length > 0 && <Link className="rounded-xl border border-amber-500 bg-white px-4 py-2 text-sm font-bold text-amber-900" to="/dashboard/notifications">Read notifications</Link>}</div></> : <><h2 className="mt-3 text-xl font-bold text-amber-950">Nothing needs your attention</h2><p className="mt-2 text-sm text-amber-900">Quotes, payment requests, and information requests will appear here.</p></>}
       </section>
       <div className="mt-6 grid gap-5 sm:grid-cols-3">
-        {[['Beneficiaries', '0'], ['Active requests', '0'], ['Active orders', '0']].map(([label, value]) => <div key={label} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-semibold text-slate-500">{label}</p><p className="mt-3 text-3xl font-bold">{value}</p></div>)}
+        {[["Beneficiaries", state.beneficiaries.length], ["Active requests", state.requests.filter((request) => !["delivered", "completed", "cancelled", "unable_to_fulfill"].includes(request.status)).length], ["Active orders", state.orders.length]].map(([label, value]) => <div key={label} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-semibold text-slate-500">{label}</p><p className="mt-3 text-3xl font-bold">{state.status === "loading" ? "—" : value}</p></div>)}
       </div>
       <section className="mt-6 grid gap-6 xl:grid-cols-2">
         <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Beneficiaries</p><h2 className="mt-3 text-xl font-bold">Manage your loved ones</h2><p className="mt-2 text-sm leading-6 text-slate-600">Save contact, consent, and delivery details securely for each person you support.</p><Link className="mt-6 inline-flex min-h-11 items-center rounded-xl border border-emerald-600 px-4 text-sm font-bold text-emerald-700" to="/dashboard/beneficiaries">View beneficiaries</Link></div>
-        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Recent activity</p><h2 className="mt-3 text-xl font-bold">No account activity yet</h2><p className="mt-2 text-sm leading-6 text-slate-600">Request, quote, payment, and delivery updates will be recorded here.</p></div>
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Recent activity</p>{recentActivity.length ? <div className="mt-4 space-y-3">{recentActivity.map((notification) => <div key={notification.id} className="rounded-xl bg-slate-50 p-4"><h2 className="text-sm font-bold">{notification.title}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{notification.message}</p>{notification.actionPath && <Link className="mt-2 inline-flex text-xs font-bold text-emerald-700" to={notification.actionPath}>{notification.actionLabel || "View update"} →</Link>}</div>)}</div> : <><h2 className="mt-3 text-xl font-bold">No account activity yet</h2><p className="mt-2 text-sm leading-6 text-slate-600">Request, quote, payment, and delivery updates will be recorded here.</p></>}</div>
       </section>
     </main>
   );

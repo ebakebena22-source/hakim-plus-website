@@ -138,3 +138,11 @@ test("security overview excludes ordinary fulfillment failures", async () => {
   assert.match(api, /event_type LIKE 'auth\.%'/);
   assert.doesNotMatch(api, /event_type ILIKE '%failed%'/);
 });
+
+test("customer dashboard loads live portal data instead of placeholder counts", async () => {
+  const portal = await source("src/pages/PortalPages.jsx");
+  for (const api of ["beneficiariesApi.list", "requestsApi.list", "ordersApi.list", "notificationsApi.list"]) assert.ok(portal.includes(api), `dashboard must use ${api}`);
+  assert.doesNotMatch(portal, /\[\['Beneficiaries', '0'\]/);
+  assert.match(portal, /actionRequests/);
+  assert.match(portal, /recentActivity/);
+});
