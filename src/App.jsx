@@ -1,14 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Analytics } from "@vercel/analytics/react";
-
-const trackMetaEvent = (eventName, params = {}) => {
-  console.log("Meta event:", eventName, params);
-
-  if (typeof window !== "undefined" && typeof window.fbq === "function") {
-    window.fbq("track", eventName, params);
-  }
-};
 
 function Icon({ name, size = 22, className = "" }) {
   const common = {
@@ -339,25 +330,6 @@ async function submitRequestToBackend(form) {
   return { ok: true, mode: "sent-no-cors", payload };
 }
 
-function RatingStars({ rating = 5 }) {
-  return (
-    <div className="mb-4 flex items-center gap-1 text-sm text-emerald-300" aria-label={`${rating} star rating`}>
-      {Array.from({ length: 5 }).map((_, starIndex) => {
-        const fullStars = Math.floor(rating);
-        const hasHalf = rating % 1 !== 0;
-        if (starIndex < fullStars) return <span key={starIndex}>★</span>;
-        if (starIndex === fullStars && hasHalf) return <span key={starIndex}>☆</span>;
-        return (
-          <span key={starIndex} className="opacity-35">
-            ★
-          </span>
-        );
-      })}
-      <span className="ml-2 text-xs font-semibold text-slate-400">{rating.toFixed(1)}</span>
-    </div>
-  );
-}
-
 function runSelfTests() {
   console.assert(typeof document === "undefined" || true, "Font applied via inline style");
   console.assert(true, "Using a modern non-generic font stack");
@@ -397,6 +369,7 @@ function Button({
   type = "button",
   external = false,
   onClick,
+  disabled = false,
 }) {
   const base = "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-4 focus:ring-emerald-500/20";
   const styles =
@@ -420,7 +393,7 @@ function Button({
   }
 
   return (
-    <button type={type} className={classes} onClick={onClick}>
+    <button type={type} className={classes} onClick={onClick} disabled={disabled}>
   {children}
 </button>
   );
@@ -476,13 +449,9 @@ export default function DiasporaPharmacyLandingPage() {
 
  async function handleSubmit(event) {
   event.preventDefault();
-  trackMetaEvent("Lead", {
-  source: "Request Form",
-  country: form.country || "Unknown",
-});
 
   // Open WhatsApp FIRST (this avoids browser blocking)
-  const newWindow = window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+  window.open(whatsappUrl, "_blank", "noopener,noreferrer");
 
   setSubmitState("loading");
   setSubmitMessage("Saving your request...");
@@ -500,7 +469,8 @@ export default function DiasporaPharmacyLandingPage() {
 }
 
   return (
-    <main className="min-h-screen scroll-smooth bg-slate-50 text-slate-900" style={{ fontFamily: bodyFont, letterSpacing: "-0.01em" }}>
+    <main id="main-content" className="min-h-screen scroll-smooth bg-slate-50 text-slate-900" style={{ fontFamily: bodyFont, letterSpacing: "-0.01em" }}>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <nav className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
@@ -520,13 +490,9 @@ export default function DiasporaPharmacyLandingPage() {
             <a href="#contact" className="transition-colors duration-300 hover:text-slate-950">Start request</a>
             <a href="#faq" className="transition-colors duration-300 hover:text-slate-950">FAQ</a>
           </div>
-          <div className="hidden md:block">
-            <Button href={whatsappUrl} external 
-            onClick={() =>
-    trackMetaEvent("Contact", {
-      source: "Hero WhatsApp",
-    })
-  }>WhatsApp (+251971818802)</Button>
+          <div className="hidden items-center gap-3 md:flex">
+            <a href="/login" className="text-sm font-semibold text-slate-700 transition hover:text-emerald-700">Customer login</a>
+            <Button href="/signup">Create account</Button>
           </div>
           <a
             href={whatsappUrl}
@@ -534,11 +500,6 @@ export default function DiasporaPharmacyLandingPage() {
             rel="noopener noreferrer"
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 md:hidden"
             aria-label="Open WhatsApp"
-            onClick={() =>
-    trackMetaEvent("Contact", {
-      source: "Hero WhatsApp",
-    })
-  }
           >
             <Icon name="chat" size={19} />
           </a>
@@ -567,13 +528,9 @@ export default function DiasporaPharmacyLandingPage() {
               Hakim Plus helps Ethiopians abroad pay for their family’s medicine in Ethiopia with more clarity, control, and confidence. Instead of sending money and hoping for the best, you get confirmation before payment and proof after delivery.
             </p>
             <div className="mt-7 grid gap-3 sm:flex sm:flex-row">
-              <Button href="#contact">Start a medicine request <Icon name="arrow" size={18} /></Button>
+              <Button href="/signup">Create your account <Icon name="arrow" size={18} /></Button>
               <Button href="#how" variant="secondary">See how it works</Button>
-              <Button href={whatsappUrl} external variant="secondary" onClick={() =>
-    trackMetaEvent("Contact", {
-      source: "Hero WhatsApp",
-    })
-  }>
+              <Button href={whatsappUrl} external variant="secondary">
                 WhatsApp (+251971818802) <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -867,11 +824,7 @@ export default function DiasporaPharmacyLandingPage() {
                   <p className="text-sm font-semibold text-white">+251-971-81-8802</p>
                 </div>
               </div>
-              <Button href={whatsappUrl} external className="mt-4 w-full" onClick={() =>
-    trackMetaEvent("Contact", {
-      source: "Hero WhatsApp",
-    })
-  }>
+              <Button href={whatsappUrl} external className="mt-4 w-full">
                 Chat on WhatsApp <Icon name="chat" size={18} />
               </Button>
             </div>
@@ -879,32 +832,32 @@ export default function DiasporaPharmacyLandingPage() {
           <form className="rounded-[1.5rem] border border-white/10 bg-white/[0.06] p-5 shadow-xl backdrop-blur md:p-6" onSubmit={handleSubmit}>
             <div className="mb-5 grid gap-4 md:grid-cols-2">
               <div>
-                <label className="mb-2 block text-xs font-semibold text-slate-400">Your name</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" />
+                <label className="mb-2 block text-xs font-semibold text-slate-400" htmlFor="public-name">Your name</label>
+                <input id="public-name" autoComplete="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Bethlehem" />
               </div>
               <div>
-                <label className="mb-2 block text-xs font-semibold text-slate-400">Country</label>
-                <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" />
+                <label className="mb-2 block text-xs font-semibold text-slate-400" htmlFor="public-country">Country</label>
+                <input id="public-country" autoComplete="country-name" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="USA, UAE" />
               </div>
             </div>
             <div className="mb-5">
-              <label className="mb-2 block text-xs font-semibold text-slate-400">WhatsApp number</label>
-              <input type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." />
+              <label className="mb-2 block text-xs font-semibold text-slate-400" htmlFor="public-phone">WhatsApp number</label>
+              <input id="public-phone" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="+1..., +971..." />
             </div>
             <div className="mb-6">
-              <label className="mb-2 block text-xs font-semibold text-slate-400">Request details</label>
-              <textarea value={form.need} onChange={(e) => setForm({ ...form, need: e.target.value })} className="w-full min-h-28 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="Medicine name, prescription, urgency" />
+              <label className="mb-2 block text-xs font-semibold text-slate-400" htmlFor="public-inquiry">General inquiry</label>
+              <textarea id="public-inquiry" aria-describedby="public-form-privacy" value={form.need} onChange={(e) => setForm({ ...form, need: e.target.value })} className="w-full min-h-28 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" placeholder="How can Hakim Plus help? Do not include prescriptions or private medical details here." />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={submitState === "loading"}>
               {submitState === "loading" ? "Submitting..." : "Submit request"}
               <Icon name="arrow" size={18} />
             </Button>
             {submitMessage && (
-              <p className={`mt-4 rounded-xl px-4 py-3 text-xs ${submitState === "error" ? "bg-red-500/10 text-red-300" : "bg-emerald-500/10 text-emerald-300"}`}>
+              <p className={`mt-4 rounded-xl px-4 py-3 text-xs ${submitState === "error" ? "bg-red-500/10 text-red-300" : "bg-emerald-500/10 text-emerald-300"}`} role={submitState === "error" ? "alert" : "status"}>
                 {submitMessage}
               </p>
             )}
-            <p className="mt-4 text-[11px] text-slate-500">Not for emergencies. Visit a health facility for urgent care.</p>
+            <p id="public-form-privacy" className="mt-4 text-[11px] leading-5 text-slate-500">For privacy, do not submit prescriptions or sensitive medical details through this public form. Not for emergencies—visit an appropriate health facility for urgent care.</p>
           </form>
         </motion.div>
       </section>
@@ -990,11 +943,7 @@ export default function DiasporaPharmacyLandingPage() {
                 <span>Proof sent after delivery</span>
               </div>
             </div>
-            <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary" onClick={() =>
-    trackMetaEvent("Contact", {
-      source: "Hero WhatsApp",
-    })
-  }>
+            <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary">
               WhatsApp (+251971818802) <Icon name="chat" size={18} />
             </Button>
           </motion.div>
@@ -1019,7 +968,6 @@ export default function DiasporaPharmacyLandingPage() {
             <p>Licensed by EFDA</p>
             <p>Medicine verification · Payment request · Delivery proof</p>
           </div>
-          <Analytics />
         </div>
       </footer>
     </main>

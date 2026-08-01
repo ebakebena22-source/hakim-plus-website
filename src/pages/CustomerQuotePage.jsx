@@ -1,0 +1,55 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { quotesApi } from "../api/quotes";
+import { formatMinorAmount } from "../quotes/quoteSchema";
+
+function amountMinor(value, fallbackDecimal) {
+  if (Number.isInteger(value)) return value;
+  const decimal = Number(fallbackDecimal || 0);
+  return Number.isFinite(decimal) ? Math.round(decimal * 100) : 0;
+}
+
+export default function CustomerQuotePage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [state, setState] = useState({ status: "loading", quote: null, request: null, error: "" });
+  const [decision, setDecision] = useState("review");
+  const [message, setMessage] = useState("");
+  const [partialAccepted, setPartialAccepted] = useState(false);
+  const [action, setAction] = useState({ busy: false, error: "" });
+
+  useEffect(() => { let active = true; quotesApi.getForRequest(id).then((result) => { if (active) setState({ status: "ready", quote: result.quote, request: result.request || null, error: "" }); }).catch((error) => { if (active) setState({ status: "error", quote: null, request: null, error: error.message }); }); return () => { active = false; }; }, [id]);
+
+  async function approve() {
+    setAction({ busy: true, error: "" });
+    try { const result = await quotesApi.approve(state.quote.publicId || state.quote.id, { partialFulfillmentAccepted: partialAccepted }); navigate(result.nextPath || `/dashboard/requests/${encodeURIComponent(id)}/payment`, { replace: true }); }
+    catch (error) { setAction({ busy: false, error: error.message }); }
+  }
+
+  async function submitChange(event) {
+    event.preventDefault();
+    if (!message.trim()) return setAction({ busy: false, error: "Describe the change you need." });
+    setAction({ busy: true, error: "" });
+    try { await quotesApi.requestChange(state.quote.publicId || state.quote.id, message.trim()); navigate(`/dashboard/requests/${encodeURIComponent(id)}`, { replace: true }); }
+    catch (error) { setAction({ busy: false, error: error.message }); }
+  }
+
+  async function decline(event) {
+    event.preventDefault();
+    if (!window.confirm("Decline this quote? You will not be charged.")) return;
+    setAction({ busy: true, error: "" });
+    try { await quotesApi.decline(state.quote.publicId || state.quote.id, message.trim()); navigate(`/dashboard/requests/${encodeURIComponent(id)}`, { replace: true }); }
+    catch (error) { setAction({ busy: false, error: error.message }); }
+  }
+
+  if (state.status === "loading") return <main className="grid min-h-screen place-items-center bg-slate-50" role="status"><p className="font-semibold text-slate-600">Loading secure quote…</p></main>;
+  if (state.status === "error") return <main className="px-5 py-10"><div className="mx-auto max-w-3xl rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800" role="alert">{state.error}</div></main>;
+  const quote = state.quote;
+  const currency = quote.currency || "ETB";
+  const hasPartial = quote.items.some((item) => item.availability !== "available");
+  const expired = quote.expired === true || quote.status === "expired";
+  return <main className="px-5 py-8 sm:px-8 lg:px-10 lg:py-10"><div className="mx-auto max-w-4xl"><Link className="text-sm font-bold text-slate-500 hover:text-emerald-700" to={`/dashboard/requests/${encodeURIComponent(id)}`}>← Request {state.request?.requestNumber || id}</Link><div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-emerald-700">Pharmacy quote</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Review your confirmed quote</h1><p className="mt-3 text-sm text-slate-600">This quote is separate from your original request. Review every item before approving.</p></div><span className={`self-start rounded-full px-4 py-2 text-sm font-bold ${expired ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{expired ? "Quote expired" : quote.statusLabel || "Ready for approval"}</span></div>{action.error && <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">{action.error}</div>}
+    <section className="mt-8 overflow-hidden rounded-[2rem] border border-slate-200 bg-white"><div className="border-b border-slate-200 p-6 sm:p-8"><div className="flex flex-col gap-3 sm:flex-row sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Quote number</p><p className="mt-2 text-lg font-bold">{quote.quoteNumber}</p></div><div className="sm:text-right"><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Expires</p><p className="mt-2 font-bold">{quote.expiresAt ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(quote.expiresAt)) : "Not provided"}</p></div></div></div><div className="divide-y divide-slate-100">{quote.items.map((item,index) => <article key={item.id || index} className="p-6 sm:p-8"><div className="flex flex-col gap-4 sm:flex-row sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h2 className="font-bold">{item.medicationName}</h2><span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${item.availability === "available" ? "bg-emerald-50 text-emerald-700" : item.availability === "partial" ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-700"}`}>{item.availability === "available" ? "Available" : item.availability === "partial" ? "Partially available" : "Unavailable"}</span></div><p className="mt-1 text-sm text-slate-500">{[item.strength, item.dosageForm, item.quotedQuantity && `${item.quotedQuantity} ${item.unitLabel || "units"}`].filter(Boolean).join(" · ")}</p>{item.pharmacyNote && <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700">{item.pharmacyNote}</p>}</div><div className="sm:text-right"><p className="font-bold">{item.availability === "unavailable" ? "Not charged" : formatMinorAmount(amountMinor(item.lineTotalMinor, item.lineTotal), currency)}</p>{item.availability !== "unavailable" && <p className="mt-1 text-xs text-slate-500">{formatMinorAmount(amountMinor(item.unitPriceMinor, item.unitPrice), currency)} each</p>}</div></div></article>)}</div><div className="bg-slate-50 p-6 sm:p-8"><dl className="ml-auto max-w-sm space-y-3 text-sm"><div className="flex justify-between"><dt className="text-slate-600">Subtotal</dt><dd className="font-bold">{formatMinorAmount(amountMinor(quote.subtotalMinor, quote.subtotal), currency)}</dd></div><div className="flex justify-between"><dt className="text-slate-600">Delivery fee</dt><dd>{formatMinorAmount(amountMinor(quote.deliveryFeeMinor, quote.deliveryFee), currency)}</dd></div>{amountMinor(quote.serviceFeeMinor, quote.serviceFee) > 0 && <div className="flex justify-between"><dt className="text-slate-600">Service fee</dt><dd>{formatMinorAmount(amountMinor(quote.serviceFeeMinor, quote.serviceFee), currency)}</dd></div>}{amountMinor(quote.taxMinor, quote.tax) > 0 && <div className="flex justify-between"><dt className="text-slate-600">Tax</dt><dd>{formatMinorAmount(amountMinor(quote.taxMinor, quote.tax), currency)}</dd></div>}{amountMinor(quote.discountMinor, quote.discount) > 0 && <div className="flex justify-between text-emerald-700"><dt>Discount</dt><dd>-{formatMinorAmount(amountMinor(quote.discountMinor, quote.discount), currency)}</dd></div>}<div className="flex justify-between border-t border-slate-300 pt-4 text-lg"><dt className="font-bold">Grand total</dt><dd className="font-bold">{formatMinorAmount(amountMinor(quote.grandTotalMinor, quote.grandTotal), currency)}</dd></div></dl>{quote.pharmacyNotes && <div className="mt-6 rounded-xl bg-white p-4 text-sm leading-6 text-slate-700"><strong>Pharmacy note:</strong> {quote.pharmacyNotes}</div>}</div></section>
+    {expired ? <section className="mt-6 rounded-[2rem] border border-red-200 bg-red-50 p-6"><h2 className="text-lg font-bold text-red-950">This quote has expired</h2><p className="mt-2 text-sm leading-6 text-red-800">Pricing or availability may have changed. Contact Hakim Plus or request an updated quote before paying.</p><Link className="mt-5 inline-flex rounded-xl bg-red-800 px-4 py-3 text-sm font-bold text-white" to={`/dashboard/requests/${encodeURIComponent(id)}`}>Return to request</Link></section> : <section className="mt-6 rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><h2 className="text-lg font-bold">What would you like to do?</h2>{hasPartial && <label className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><input className="mt-1 h-5 w-5 accent-amber-700" type="checkbox" checked={partialAccepted} onChange={(event) => setPartialAccepted(event.target.checked)} /><span><strong className="block">Approve partial fulfillment</strong>I understand that one or more requested items are partially available or unavailable, and I approve the available quoted items only.</span></label>}<div className="mt-6 grid gap-3 sm:grid-cols-3"><button className="min-h-12 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white disabled:bg-slate-300" type="button" disabled={action.busy || (hasPartial && !partialAccepted)} onClick={approve}>Approve &amp; continue to payment</button><button className="min-h-12 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700" type="button" onClick={() => { setDecision("change"); setMessage(""); }}>Request change</button><button className="min-h-12 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-700" type="button" onClick={() => { setDecision("decline"); setMessage(""); }}>Decline</button></div>{decision === "change" && <form className="mt-6 rounded-2xl bg-blue-50 p-5" onSubmit={submitChange}><label className="text-sm font-bold text-blue-950" htmlFor="quote-change">What should Hakim Plus review or change?</label><textarea id="quote-change" className="mt-2 min-h-28 w-full rounded-xl border border-blue-200 bg-white p-4 text-sm" value={message} onChange={(event) => setMessage(event.target.value)} /><button className="mt-3 rounded-xl bg-blue-800 px-4 py-3 text-sm font-bold text-white" type="submit" disabled={action.busy}>Send change request</button></form>}{decision === "decline" && <form className="mt-6 rounded-2xl bg-red-50 p-5" onSubmit={decline}><label className="text-sm font-bold text-red-950" htmlFor="quote-decline">Reason (optional)</label><textarea id="quote-decline" className="mt-2 min-h-24 w-full rounded-xl border border-red-200 bg-white p-4 text-sm" value={message} onChange={(event) => setMessage(event.target.value)} /><button className="mt-3 rounded-xl bg-red-800 px-4 py-3 text-sm font-bold text-white" type="submit" disabled={action.busy}>Decline quote</button></form>}<p className="mt-5 text-xs leading-5 text-slate-500">Approval does not by itself prove payment. The payment phase will create a secure provider session and verify the result server-side.</p></section>}
+  </div></main>;
+}
