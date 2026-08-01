@@ -64,3 +64,69 @@ test("local preview auth is localhost-only and does not store raw passwords", as
   assert.doesNotMatch(auth, /accounts\.push\(\{\s*user,\s*password:/);
   assert.match(auth, /roles: \["customer"\]/);
 });
+
+test("customer and admin API contracts agree on protected upload payloads", async () => {
+  const api = await source("api/v1/[...path].js");
+  const uploads = await source("src/api/protectedUploads.js");
+  const messages = await source("src/pages/MessageThreadPage.jsx");
+  assert.match(uploads, /message-attachments/);
+  assert.match(uploads, /delivery-proof/);
+  assert.match(messages, /fileReferences/);
+  assert.match(api, /body\.fileReferences \|\| body\.attachments/);
+  assert.match(api, /target_id=\$\{requestId\}/);
+});
+
+test("production API enforces server-side role and workflow boundaries", async () => {
+  const api = await source("api/v1/[...path].js");
+  for (const roles of [
+    '["admin", "pharmacist"]',
+    '["admin", "pharmacist", "customer_support"]',
+    '["admin", "pharmacist", "fulfillment", "delivery_operations"]',
+    '["admin"]',
+  ]) assert.ok(api.includes(`requireRole(user, res, ${roles})`), `missing role guard ${roles}`);
+  assert.match(api, /Only the current sent quote can be approved/);
+  assert.match(api, /This quote has expired/);
+  assert.match(api, /Only a pending transfer can be approved/);
+  assert.match(api, /Only a pending transfer can be rejected/);
+  assert.match(api, /Only an order that is out for delivery can be confirmed delivered/);
+  assert.match(api, /Beneficiary contact is not authorized/);
+});
+
+test("notification preferences, account activity, messages, and order actions are real API routes", async () => {
+  const api = await source("api/v1/[...path].js");
+  for (const route of ["notifications", "communication-preferences", "account-activity", "messages", "request-again", "delivery-assignment", "delivery-confirmation", "delivery-failure"]) {
+    assert.ok(api.includes(`"${route}"`), `missing ${route} route`);
+  }
+  assert.match(api, /CREATE TABLE IF NOT EXISTS communication_preferences/);
+  assert.match(api, /INSERT INTO communication_preferences/);
+  assert.match(api, /CREATE TABLE IF NOT EXISTS notifications/);
+});
+
+test("customer request schema matches the production API field names", async () => {
+  const schema = await source("src/requests/requestSchema.js");
+  const api = await source("api/v1/[...path].js");
+  assert.match(schema, /submissionMethod: request\.method/);
+  assert.match(api, /data\.submissionMethod \|\| data\.method/);
+  assert.match(schema, /at least 10 characters/);
+  assert.match(api, /String\(data\.description \|\| ""\)\.trim\(\)\.length < 10/);
+});
+
+test("quote calculations clamp totals and validation rejects unsafe quote states", async () => {
+  const { calculateQuotePreview, validateQuote, createQuotePayload } = await import("../src/quotes/quoteSchema.js");
+  const future = new Date(Date.now() + 86_400_000).toISOString().slice(0, 16);
+  const quote = { currency: "ETB", expiresAt: future, deliveryFee: "20", serviceFee: "5", tax: "0", discount: "500", pharmacyNotes: "", items: [{ medicationName: "QA item", quotedQuantity: "2", unitPrice: "100", availability: "available", strength: "", dosageForm: "", unitLabel: "pack", pharmacyNote: "" }] };
+  assert.deepEqual(calculateQuotePreview(quote), { itemSubtotalMinor: 20_000, grandTotalMinor: 0 });
+  assert.deepEqual(validateQuote(quote), {});
+  assert.match(createQuotePayload(quote).expiresAt, /Z$/);
+  assert.ok(validateQuote({ ...quote, expiresAt: "2020-01-01T00:00" }).expiresAt);
+  assert.ok(validateQuote({ ...quote, items: [{ ...quote.items[0], quotedQuantity: "1.5" }] })["item-0-pricing"]);
+});
+
+test("customer past orders and role-aware staff UI use the corrected flows", async () => {
+  const api = await source("api/v1/[...path].js");
+  const requestPage = await source("src/pages/AdminRequestPages.jsx");
+  const quotePage = await source("src/pages/AdminQuotePage.jsx");
+  assert.match(api, /\["past", "history", "completed"\]\.includes\(view\)/);
+  assert.match(requestPage, /canQuote && <section/);
+  assert.match(quotePage, /defaultQuoteExpiry/);
+});

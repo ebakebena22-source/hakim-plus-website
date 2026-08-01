@@ -4,16 +4,31 @@ import { adminApi } from "../api/admin";
 import { adminQuotesApi } from "../api/quotes";
 import { calculateQuotePreview, createQuotePayload, emptyQuote, emptyQuoteItem, formatMinorAmount, validateQuote } from "../quotes/quoteSchema";
 
+function defaultQuoteExpiry() {
+  const future = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  const local = new Date(future.getTime() - future.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
+function toLocalDateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
 function initialQuoteForRequest(request, existingQuote) {
   if (existingQuote) return {
     ...emptyQuote,
     ...existingQuote,
     items: existingQuote.items?.length ? existingQuote.items : [{ ...emptyQuoteItem }],
-    expiresAt: existingQuote.expiresAt ? String(existingQuote.expiresAt).slice(0, 16) : "",
+    expiresAt: toLocalDateTimeInput(existingQuote.expiresAt),
   };
   const medications = request.medications || [];
   return {
     ...emptyQuote,
+    expiresAt: defaultQuoteExpiry(),
     items: medications.length ? medications.map((item) => ({ ...emptyQuoteItem, medicationName: item.medicationName || "", strength: item.strength || "", dosageForm: item.dosageForm || "", quotedQuantity: String(item.quotedQuantity || Number.parseInt(item.quantity, 10) || 1) })) : [{ ...emptyQuoteItem }],
   };
 }

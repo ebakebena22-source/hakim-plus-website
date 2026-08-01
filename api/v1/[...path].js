@@ -182,6 +182,7 @@ async function ensureSchema() {
       id text PRIMARY KEY, owner_user_id text NOT NULL REFERENCES app_profiles(user_id), kind text NOT NULL,
       blob_url text NOT NULL, pathname text NOT NULL, file_name text NOT NULL, content_type text NOT NULL, size_bytes integer NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`ALTER TABLE protected_files ADD COLUMN IF NOT EXISTS target_id text`;
     await sql`CREATE TABLE IF NOT EXISTS medication_requests (
       id text PRIMARY KEY, owner_user_id text NOT NULL REFERENCES app_profiles(user_id), beneficiary_id text NOT NULL REFERENCES beneficiaries(id),
       request_number text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'submitted', data jsonb NOT NULL,
@@ -209,6 +210,13 @@ async function ensureSchema() {
     await sql`CREATE TABLE IF NOT EXISTS audit_events (
       id text PRIMARY KEY, actor_user_id text, event_type text NOT NULL, target_type text, target_id text,
       metadata jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`CREATE TABLE IF NOT EXISTS notifications (
+      id text PRIMARY KEY, owner_user_id text NOT NULL REFERENCES app_profiles(user_id), title text NOT NULL, message text NOT NULL,
+      action_path text, action_label text, read_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`CREATE INDEX IF NOT EXISTS notifications_owner_idx ON notifications(owner_user_id, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS communication_preferences (
+      user_id text PRIMARY KEY REFERENCES app_profiles(user_id), data jsonb NOT NULL DEFAULT '{}'::jsonb,
+      updated_at timestamptz NOT NULL DEFAULT now())`;
   })().catch((error) => { schemaPromise = undefined; throw error; });
   return schemaPromise;
 }
@@ -218,7 +226,7 @@ function numberCode(prefix) {
 }
 
 function statusLabel(status) {
-  const labels = { submitted: "Submitted", under_review: "Under review", awaiting_information: "Information requested", quote_ready: "Quote ready", awaiting_payment: "Awaiting payment", payment_verification: "Transfer awaiting verification", paid: "Payment confirmed", payment_confirmed: "Payment confirmed", preparing: "Preparing", dispatched: "Dispatched", delivered: "Delivered", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill", pending: "Awaiting verification", approved: "Approved", rejected: "Rejected", confirmed: "Confirmed" };
+  const labels = { submitted: "Submitted", under_review: "Under review", under_pharmacy_review: "Under pharmacy review", additional_information_required: "Additional information required", awaiting_information: "Information requested", contacting_beneficiary: "Contacting beneficiary", prescription_verification: "Prescription verification", checking_availability: "Checking availability", quote_ready: "Quote ready", awaiting_payment: "Awaiting payment", payment_verification: "Transfer awaiting verification", paid: "Payment confirmed", payment_confirmed: "Payment confirmed", preparing: "Preparing", preparing_order: "Preparing order", ready_for_delivery: "Ready for delivery", out_for_delivery: "Out for delivery", dispatched: "Dispatched", delivery_failed: "Delivery failed", completed: "Completed", delivered: "Delivered", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill", pending: "Awaiting verification", approved: "Approved", rejected: "Rejected", confirmed: "Confirmed" };
   return labels[status] || String(status || "").replaceAll("_", " ");
 }
 
@@ -244,7 +252,9 @@ function beneficiaryFromRow(row) {
 function requestFromRow(row) {
   const history = row.status_history || [];
   const data = row.data || {};
-  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment"].includes(row.status), latestUpdate: history.at(-1)?.note, quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
+  const terminal = ["delivered", "completed", "cancelled", "unable_to_fulfill"].includes(row.status);
+  const updatedAt = new Date(row.updated_at || row.created_at).getTime();
+  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment", "awaiting_information", "additional_information_required"].includes(row.status), urgent: Boolean(data.urgent), overdue: !terminal && Number.isFinite(updatedAt) && Date.now() - updatedAt > 24 * 60 * 60 * 1000, latestUpdate: history.at(-1)?.note, quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
 }
 
 async function getRequestRow(id, ownerId) {
@@ -283,6 +293,121 @@ async function audit(actorId, eventType, targetType, targetId, metadata = {}) {
   await sql`INSERT INTO audit_events (id, actor_user_id, event_type, target_type, target_id, metadata) VALUES (${randomUUID()}, ${actorId}, ${eventType}, ${targetType}, ${targetId}, ${JSON.stringify(metadata)}::jsonb)`;
 }
 
+function hasRole(user, allowedRoles) {
+  return user.roles.some((role) => allowedRoles.includes(role));
+}
+
+function requireRole(user, res, allowedRoles) {
+  if (hasRole(user, allowedRoles)) return true;
+  fail(res, 403, "You do not have permission to perform this action.");
+  return false;
+}
+
+async function notify(ownerUserId, title, message, actionPath, actionLabel) {
+  await sql`INSERT INTO notifications (id, owner_user_id, title, message, action_path, action_label)
+    VALUES (${randomUUID()}, ${ownerUserId}, ${title}, ${message}, ${actionPath || null}, ${actionLabel || null})`;
+}
+
+function notificationFromRow(row) {
+  return { id: row.id, publicId: row.id, title: row.title, message: row.message, actionPath: row.action_path, actionLabel: row.action_label, readAt: row.read_at, createdAt: row.created_at };
+}
+
+function orderFromRow(row) {
+  const data = row.data || {};
+  const beneficiary = row.beneficiary_data || {};
+  const rawItems = data.items?.length ? data.items : row.request_data?.medications || [];
+  const items = rawItems.map((item) => ({ ...item, quantity: item.quantity ?? item.quotedQuantity, fulfillmentStatusLabel: item.fulfillmentStatusLabel || "Pending" }));
+  const statusHistory = data.statusHistory || [{ id: `created-${row.id}`, status: "payment_confirmed", customerLabel: "Payment confirmed", createdAt: row.created_at }];
+  const delivery = data.delivery || { address: beneficiary.deliveryAddress, instructions: beneficiary.deliveryInstructions };
+  if (data.deliveryProofReference) delivery.proofViewUrl = `/api/v1/orders/${row.id}/delivery-proof`;
+  return {
+    ...data,
+    id: row.id,
+    publicId: row.id,
+    orderNumber: row.order_number,
+    requestId: row.request_id,
+    requestNumber: row.request_number,
+    customerName: row.customer_name,
+    customerEmail: row.customer_email,
+    beneficiary: { ...beneficiary, id: row.beneficiary_id },
+    beneficiaryName: beneficiary.fullName,
+    payment: { id: row.payment_id, paymentNumber: row.payment_number, paidAt: row.paid_at },
+    status: row.status,
+    statusLabel: statusLabel(row.status),
+    amountMinor: row.amount_minor,
+    currency: row.currency,
+    items,
+    itemCount: items.length,
+    delivery,
+    deliveryStatusLabel: data.deliveryStatusLabel || (["out_for_delivery", "delivered", "delivery_failed"].includes(row.status) ? statusLabel(row.status) : "Not dispatched"),
+    internalTimeline: data.internalTimeline || [],
+    statusHistory,
+    timeline: statusHistory,
+    customerStatusNote: statusHistory.at(-1)?.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function staffOrderFromRow(row, user) {
+  const order = orderFromRow(row);
+  const clinical = hasRole(user, ["admin", "pharmacist"]);
+  if (!clinical) {
+    const beneficiary = order.beneficiary || {};
+    order.beneficiary = {
+      id: beneficiary.id,
+      fullName: beneficiary.fullName,
+      phone: beneficiary.phone,
+      alternativePhone: beneficiary.alternativePhone,
+      deliveryAddress: beneficiary.deliveryAddress,
+      deliveryInstructions: beneficiary.deliveryInstructions,
+      city: beneficiary.city,
+    };
+    delete order.customerEmail;
+  }
+  if (!clinical && hasRole(user, ["delivery_operations"]) && !hasRole(user, ["fulfillment"])) {
+    order.items = [];
+    order.itemCount = 0;
+  }
+  return order;
+}
+
+function staffRequestFromRow(row, user) {
+  const request = requestFromRow(row);
+  if (hasRole(user, ["admin", "pharmacist"])) return request;
+  const beneficiary = request.beneficiary || {};
+  request.beneficiary = {
+    id: beneficiary.id,
+    fullName: beneficiary.fullName,
+    phone: beneficiary.phone,
+    alternativePhone: beneficiary.alternativePhone,
+    contactConsent: beneficiary.contactConsent,
+    deliveryAddress: beneficiary.deliveryAddress,
+    city: beneficiary.city,
+  };
+  request.beneficiaryName = beneficiary.fullName;
+  request.medications = [];
+  request.description = "Restricted to pharmacy roles";
+  request.fileReferences = [];
+  return request;
+}
+
+async function getOrderRow(id, ownerId) {
+  const rows = ownerId
+    ? await sql`SELECT o.*, r.request_number, r.data request_data, b.id beneficiary_id, b.data beneficiary_data, p.payment_number, p.paid_at, p.amount_minor, p.currency, ap.email customer_email, ap.full_name customer_name FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments p ON p.id=o.payment_id JOIN app_profiles ap ON ap.user_id=o.owner_user_id WHERE o.id=${id} AND o.owner_user_id=${ownerId}`
+    : await sql`SELECT o.*, r.request_number, r.data request_data, b.id beneficiary_id, b.data beneficiary_data, p.payment_number, p.paid_at, p.amount_minor, p.currency, ap.email customer_email, ap.full_name customer_name FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments p ON p.id=o.payment_id JOIN app_profiles ap ON ap.user_id=o.owner_user_id WHERE o.id=${id}`;
+  return rows[0];
+}
+
+async function saveOrderState(row, nextStatus, data, actorId, eventType, customerTitle, customerMessage) {
+  const now = new Date().toISOString();
+  const ownerId = row.owner_user_id;
+  await sql`UPDATE orders SET status=${nextStatus}, data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${row.id}`;
+  await audit(actorId, eventType, "order", row.id, { ownerId, status: nextStatus });
+  if (customerTitle) await notify(ownerId, customerTitle, customerMessage || statusLabel(nextStatus), `/dashboard/orders/${row.id}`, "View order");
+  return now;
+}
+
 export default async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
@@ -314,6 +439,7 @@ export default async function handler(req, res) {
       if (req.method === "GET" && path.length === 2) return send(res, 200, { beneficiary: beneficiaryFromRow(rows[0]) });
       if (req.method === "PATCH" && path.length === 2) {
         const data = await readJson(req);
+        if (!data.fullName || !data.phone || !data.city || !data.deliveryAddress || !data.contactConsent) return fail(res, 400, "Complete the required beneficiary details.");
         await sql`UPDATE beneficiaries SET data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${id}`;
         return send(res, 200, { beneficiary: { ...data, id, publicId: id } });
       }
@@ -345,13 +471,25 @@ export default async function handler(req, res) {
       }
       if (req.method === "POST" && path.length === 1) {
         const data = await readJson(req);
+        const method = String(data.submissionMethod || data.method || "");
         const beneficiaries = await sql`SELECT id FROM beneficiaries WHERE id=${data.beneficiaryId} AND owner_user_id=${user.id} AND archived=false`;
         if (!beneficiaries[0] || !data.accuracyConfirmed) return fail(res, 400, "Select a valid beneficiary and confirm the request details.");
+        if (!["prescription", "medications", "description", "contact"].includes(method)) return fail(res, 400, "Choose a valid request method.");
+        if (method === "medications" && (!Array.isArray(data.medications) || !data.medications.length || data.medications.some((item) => !String(item.medicationName || "").trim() || !String(item.quantity || "").trim()))) return fail(res, 400, "Enter a medication name and quantity for every item.");
+        if (method === "description" && String(data.description || "").trim().length < 10) return fail(res, 400, "Describe what the beneficiary needs.");
+        const fileReferences = (data.fileReferences || []).map((item) => typeof item === "string" ? item : item.fileReference).filter(Boolean);
+        if (method === "prescription" && !fileReferences.length) return fail(res, 400, "Upload at least one prescription file.");
+        if (fileReferences.length) {
+          const ownedFiles = await sql`SELECT id FROM protected_files WHERE owner_user_id=${user.id} AND kind='request' AND id = ANY(${fileReferences})`;
+          if (ownedFiles.length !== new Set(fileReferences).size) return fail(res, 400, "One or more request files are invalid.");
+        }
         const id = randomUUID();
         const requestNumber = numberCode("HPR");
         const history = [{ id: randomUUID(), status: "submitted", customerLabel: "Request submitted", note: "Hakim Plus received the medication request.", createdAt: new Date().toISOString() }];
-        await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${data.beneficiaryId}, ${requestNumber}, ${JSON.stringify(data)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
-        await audit(user.id, "request.created", "medication_request", id);
+        const requestData = { ...data, submissionMethod: method };
+        await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${data.beneficiaryId}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
+        if (fileReferences.length) await sql`UPDATE protected_files SET target_id=${id} WHERE owner_user_id=${user.id} AND kind='request' AND id = ANY(${fileReferences})`;
+        await audit(user.id, "request.created", "medication_request", id, { ownerId: user.id });
         const row = await getRequestRow(id, user.id);
         return send(res, 201, { request: requestFromRow(row) });
       }
@@ -360,6 +498,55 @@ export default async function handler(req, res) {
         const row = await getRequestRow(requestId, user.id);
         if (!row) return fail(res, 404, "Medication request not found.");
         return send(res, 200, { request: requestFromRow(row) });
+      }
+      if (path[2] === "message-attachments" && req.method === "POST" && path.length === 3) {
+        const row = await getRequestRow(requestId, user.id);
+        if (!row) return fail(res, 404, "Medication request not found.");
+        const body = await readJson(req);
+        const parsed = parseDataUrl(body);
+        const id = randomUUID();
+        const fileName = safeFilename(body.fileName, parsed.contentType);
+        const blob = await put(`messages/${user.id}/${requestId}/${id}/${fileName}`, parsed.bytes, { access: "private", contentType: parsed.contentType, addRandomSuffix: false });
+        await sql`INSERT INTO protected_files (id, owner_user_id, kind, target_id, blob_url, pathname, file_name, content_type, size_bytes) VALUES (${id}, ${user.id}, 'message', ${requestId}, ${blob.url}, ${blob.pathname}, ${fileName}, ${parsed.contentType}, ${parsed.bytes.length})`;
+        return send(res, 201, { id, fileReference: id, fileName });
+      }
+      if (path[2] === "message-attachments" && req.method === "GET" && path.length === 4) {
+        const row = await getRequestRow(requestId, user.id);
+        if (!row) return fail(res, 404, "Medication request not found.");
+        const files = await sql`SELECT * FROM protected_files WHERE id=${path[3]} AND owner_user_id=${user.id} AND kind='message' AND target_id=${requestId}`;
+        if (!files[0]) return fail(res, 404, "Message attachment not found.");
+        await audit(user.id, "message_attachment.viewed", "protected_file", path[3], { ownerId: user.id, requestId });
+        return streamPrivateBlob(res, files[0].blob_url, files[0].content_type, files[0].file_name);
+      }
+      if (path[2] === "messages") {
+        const row = await getRequestRow(requestId, user.id);
+        if (!row) return fail(res, 404, "Medication request not found.");
+        if (req.method === "GET") {
+          const messages = (row.customer_messages || []).map((message) => ({
+            ...message,
+            senderType: message.senderType || (message.author?.name === "Customer" ? "customer" : "staff"),
+            senderName: message.senderName || message.author?.name || "Hakim Plus Pharmacy",
+            attachments: (message.attachments || []).map((attachment) => ({ ...attachment, viewUrl: `/api/v1/medication-requests/${requestId}/message-attachments/${attachment.fileReference || attachment.id}` })),
+          }));
+          return send(res, 200, { request: { id: requestId, requestNumber: row.request_number }, messages, nextCursor: "" });
+        }
+        if (req.method === "POST") {
+          const body = await readJson(req);
+          const messageText = String(body.message || "").trim();
+          const attachmentReferences = (body.fileReferences || body.attachments || []).map((item) => typeof item === "string" ? item : item.fileReference).filter(Boolean);
+          if (!messageText && !attachmentReferences.length) return fail(res, 400, "Enter a message or attach a file.");
+          let attachments = [];
+          if (attachmentReferences.length) {
+            const files = await sql`SELECT id, file_name FROM protected_files WHERE owner_user_id=${user.id} AND kind='message' AND target_id=${requestId} AND id = ANY(${attachmentReferences})`;
+            if (files.length !== new Set(attachmentReferences).size) return fail(res, 400, "One or more message attachments are invalid.");
+            attachments = files.map((file) => ({ id: file.id, fileReference: file.id, fileName: file.file_name }));
+          }
+          const item = { id: randomUUID(), senderType: "customer", senderName: user.name || "Customer", message: messageText, attachments, createdAt: new Date().toISOString() };
+          const nextStatus = ["awaiting_information", "additional_information_required"].includes(row.status) ? "under_review" : row.status;
+          await sql`UPDATE medication_requests SET status=${nextStatus}, customer_messages=customer_messages || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          await audit(user.id, "customer_message.sent", "medication_request", requestId, { ownerId: user.id });
+          return send(res, 201, { message: { ...item, attachments: attachments.map((attachment) => ({ ...attachment, viewUrl: `/api/v1/medication-requests/${requestId}/message-attachments/${attachment.id}` })) } });
+        }
       }
       if (req.method === "GET" && path[2] === "quote") {
         const rows = await sql`SELECT q.* FROM quotes q JOIN medication_requests r ON r.id=q.request_id WHERE r.id=${requestId} AND r.owner_user_id=${user.id} AND q.status <> 'draft'`;
@@ -386,7 +573,7 @@ export default async function handler(req, res) {
         const transferNumber = numberCode("TRF");
         await sql`INSERT INTO bank_transfers (id, request_id, quote_id, owner_user_id, transfer_number, amount_minor, currency, transfer_reference, transfer_date, blob_url, pathname, file_name, content_type) VALUES (${id}, ${requestId}, ${rows[0].id}, ${user.id}, ${transferNumber}, ${quote.grandTotalMinor}, ${quote.currency || 'ETB'}, ${String(body.transferReference || '').slice(0, 120)}, ${body.transferDate || null}, ${blob.url}, ${blob.pathname}, ${fileName}, ${parsed.contentType})`;
         await sql`UPDATE medication_requests SET status='payment_verification', updated_at=now() WHERE id=${requestId}`;
-        await audit(user.id, "bank_transfer.submitted", "bank_transfer", id, { requestId });
+        await audit(user.id, "bank_transfer.submitted", "bank_transfer", id, { ownerId: user.id, requestId });
         return send(res, 201, { transfer: { id, transferNumber, status: "pending" } });
       }
     }
@@ -396,19 +583,33 @@ export default async function handler(req, res) {
       const rows = await sql`SELECT q.*, r.id request_id, r.owner_user_id FROM quotes q JOIN medication_requests r ON r.id=q.request_id WHERE q.id=${quoteId} AND r.owner_user_id=${user.id}`;
       if (!rows[0]) return fail(res, 404, "Quote not found.");
       if (path[2] === "approve") {
-        await sql`UPDATE quotes SET status='approved', approved_at=now(), updated_at=now() WHERE id=${quoteId}`;
+        if (!rows[0].data?.expiresAt || new Date(rows[0].data.expiresAt).getTime() <= Date.now()) return fail(res, 409, "This quote has expired. Ask Hakim Plus for an updated quote.");
+        const updated = await sql`UPDATE quotes SET status='approved', approved_at=now(), updated_at=now() WHERE id=${quoteId} AND status='sent' RETURNING id`;
+        if (!updated[0]) return fail(res, 409, "Only the current sent quote can be approved.");
         await sql`UPDATE medication_requests SET status='awaiting_payment', updated_at=now() WHERE id=${rows[0].request_id}`;
+        await audit(user.id, "quote.approved", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
         return send(res, 200, { quote: { id: quoteId, status: "approved" }, paymentPath: `/dashboard/requests/${rows[0].request_id}/payment` });
       }
       const body = await readJson(req);
       if (path[2] === "request-change") {
-        await sql`UPDATE quotes SET status='change_requested', updated_at=now() WHERE id=${quoteId}`;
-        await sql`UPDATE medication_requests SET status='under_review', customer_messages=customer_messages || ${JSON.stringify([{ id: randomUUID(), message: body.message, author: { name: "Customer" }, createdAt: new Date().toISOString() }])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
+        const message = String(body.message || "").trim();
+        if (!message) return fail(res, 400, "Explain what should be changed.");
+        const updated = await sql`UPDATE quotes SET status='change_requested', updated_at=now() WHERE id=${quoteId} AND status='sent' RETURNING id`;
+        if (!updated[0]) return fail(res, 409, "Only the current sent quote can be changed.");
+        const item = { id: randomUUID(), senderType: "customer", senderName: user.name || "Customer", message, createdAt: new Date().toISOString() };
+        const event = { id: randomUUID(), status: "under_review", customerLabel: "Changes requested", note: message, createdAt: item.createdAt };
+        await sql`UPDATE medication_requests SET status='under_review', status_history=status_history || ${JSON.stringify([event])}::jsonb, customer_messages=customer_messages || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
+        await audit(user.id, "quote.change_requested", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
         return send(res, 200, { ok: true });
       }
       if (path[2] === "decline") {
-        await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE id=${quoteId}`;
-        await sql`UPDATE medication_requests SET status='cancelled', updated_at=now() WHERE id=${rows[0].request_id}`;
+        const reason = String(body.reason || "").trim();
+        if (!reason) return fail(res, 400, "A decline reason is required.");
+        const updated = await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE id=${quoteId} AND status='sent' RETURNING id`;
+        if (!updated[0]) return fail(res, 409, "Only the current sent quote can be declined.");
+        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Request cancelled", note: reason, createdAt: new Date().toISOString() };
+        await sql`UPDATE medication_requests SET status='cancelled', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
+        await audit(user.id, "quote.declined", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
         return send(res, 200, { ok: true });
       }
     }
@@ -428,103 +629,208 @@ export default async function handler(req, res) {
 
     if (path[0] === "orders") {
       if (req.method === "GET" && path.length === 1) {
-        const rows = await sql`SELECT o.*, r.request_number, b.data beneficiary_data, p.amount_minor, p.currency FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments p ON p.id=o.payment_id WHERE o.owner_user_id=${user.id} ORDER BY o.created_at DESC`;
-        return send(res, 200, { orders: rows.map((row) => ({ ...row.data, id: row.id, publicId: row.id, orderNumber: row.order_number, requestNumber: row.request_number, beneficiaryName: row.beneficiary_data.fullName, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, createdAt: row.created_at })) });
+        const rows = await sql`SELECT o.*, r.request_number, r.data request_data, b.id beneficiary_id, b.data beneficiary_data, p.payment_number, p.paid_at, p.amount_minor, p.currency, ap.email customer_email, ap.full_name customer_name FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments p ON p.id=o.payment_id JOIN app_profiles ap ON ap.user_id=o.owner_user_id WHERE o.owner_user_id=${user.id} ORDER BY o.created_at DESC`;
+        const view = url.searchParams.get("view") || "active";
+        let orders = rows.map(orderFromRow);
+        if (view === "active") orders = orders.filter((order) => !["delivered", "completed", "cancelled"].includes(order.status));
+        if (["past", "history", "completed"].includes(view)) orders = orders.filter((order) => ["delivered", "completed", "cancelled"].includes(order.status));
+        return send(res, 200, { orders });
       }
       if (req.method === "GET" && path.length === 2) {
-        const rows = await sql`SELECT o.*, r.request_number, r.data request_data, b.data beneficiary_data, p.amount_minor, p.currency FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments p ON p.id=o.payment_id WHERE o.id=${path[1]} AND o.owner_user_id=${user.id}`;
-        if (!rows[0]) return fail(res, 404, "Order not found.");
-        const row = rows[0];
-        return send(res, 200, { order: { ...row.data, id: row.id, publicId: row.id, orderNumber: row.order_number, requestNumber: row.request_number, beneficiary: row.beneficiary_data, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, items: row.request_data.medications || [], createdAt: row.created_at, statusHistory: [{ status: "payment_confirmed", customerLabel: "Payment confirmed", createdAt: row.created_at }] } });
+        const row = await getOrderRow(path[1], user.id);
+        if (!row) return fail(res, 404, "Order not found.");
+        return send(res, 200, { order: orderFromRow(row) });
+      }
+      if (req.method === "GET" && path[2] === "delivery-proof") {
+        const row = await getOrderRow(path[1], user.id);
+        if (!row) return fail(res, 404, "Order not found.");
+        const proofReference = row.data?.deliveryProofReference;
+        if (!proofReference) return fail(res, 404, "Delivery proof is not available.");
+        const files = await sql`SELECT * FROM protected_files WHERE id=${proofReference} AND kind='delivery' AND target_id=${row.id}`;
+        if (!files[0]) return fail(res, 404, "Delivery proof is not available.");
+        await audit(user.id, "delivery_proof.viewed", "order", row.id, { ownerId: user.id, fileId: proofReference });
+        return streamPrivateBlob(res, files[0].blob_url, files[0].content_type, files[0].file_name);
+      }
+      if (req.method === "POST" && path[2] === "request-again") {
+        const row = await getOrderRow(path[1], user.id);
+        if (!row) return fail(res, 404, "Order not found.");
+        const beneficiary = await sql`SELECT id FROM beneficiaries WHERE id=${row.beneficiary_id} AND owner_user_id=${user.id} AND archived=false`;
+        if (!beneficiary[0]) return fail(res, 409, "Restore or add a beneficiary before requesting these items again.");
+        const id = randomUUID();
+        const requestNumber = numberCode("HPR");
+        const requestData = { ...(row.request_data || {}), beneficiaryId: row.beneficiary_id, accuracyConfirmed: true, urgent: false, additionalNotes: `Requested again from ${row.order_number}.` };
+        const history = [{ id: randomUUID(), status: "submitted", customerLabel: "Request submitted", note: `Requested again from ${row.order_number}.`, createdAt: new Date().toISOString() }];
+        await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${row.beneficiary_id}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
+        await audit(user.id, "order.requested_again", "order", row.id, { ownerId: user.id, newRequestId: id });
+        return send(res, 201, { request: { id, publicId: id, requestNumber }, requestPath: `/dashboard/requests/${id}/confirmation` });
       }
     }
 
     if (path[0] === "admin") {
       if (path[1] === "dashboard" && req.method === "GET") {
-        const rows = await sql`SELECT status, count(*)::int count FROM medication_requests GROUP BY status`;
-        const counts = Object.fromEntries(rows.map((row) => [row.status, row.count]));
-        const pending = (await sql`SELECT count(*)::int count FROM bank_transfers WHERE status='pending'`)[0].count;
-        return send(res, 200, { metrics: { submitted: counts.submitted || 0, needsReview: (counts.submitted || 0) + (counts.under_review || 0), awaitingInformation: counts.awaiting_information || 0, quoteReady: counts.quote_ready || 0, awaitingPayment: (counts.awaiting_payment || 0) + pending, activeOrders: (counts.paid || 0) + (counts.preparing || 0) }, totalOverdue: 0, urgentRequests: 0 });
+        const requestRows = await sql`SELECT status, count(*)::int count FROM medication_requests GROUP BY status`;
+        const orderRows = await sql`SELECT status, count(*)::int count FROM orders GROUP BY status`;
+        const requestCounts = Object.fromEntries(requestRows.map((row) => [row.status, row.count]));
+        const orderCounts = Object.fromEntries(orderRows.map((row) => [row.status, row.count]));
+        const urgentRequests = (await sql`SELECT count(*)::int count FROM medication_requests WHERE COALESCE((data->>'urgent')::boolean, false)=true AND status NOT IN ('delivered','completed','cancelled','unable_to_fulfill')`)[0].count;
+        const totalOverdue = (await sql`SELECT count(*)::int count FROM medication_requests WHERE updated_at < now() - interval '24 hours' AND status NOT IN ('delivered','completed','cancelled','unable_to_fulfill')`)[0].count;
+        return send(res, 200, { metrics: {
+          newRequests: requestCounts.submitted || 0,
+          awaitingReview: (requestCounts.under_review || 0) + (requestCounts.under_pharmacy_review || 0),
+          beneficiaryContact: requestCounts.contacting_beneficiary || 0,
+          awaitingQuote: (requestCounts.checking_availability || 0) + (requestCounts.prescription_verification || 0),
+          awaitingApproval: requestCounts.quote_ready || 0,
+          paymentsReceived: orderCounts.payment_confirmed || 0,
+          preparingOrders: (orderCounts.preparing_order || 0) + (orderCounts.preparing || 0),
+          awaitingDelivery: orderCounts.ready_for_delivery || 0,
+          outForDelivery: orderCounts.out_for_delivery || 0,
+        }, totalOverdue, urgentRequests });
       }
       if (path[1] === "requests") {
+        if (!requireRole(user, res, ["admin", "pharmacist", "customer_support"])) return;
         if (req.method === "GET" && path.length === 2) {
           const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id ORDER BY r.created_at DESC`;
-          let requests = rows.map(requestFromRow);
+          let requests = rows.map((row) => staffRequestFromRow(row, user));
           const queue = url.searchParams.get("queue");
           const search = String(url.searchParams.get("search") || "").toLowerCase();
-          if (queue && !["all", "overdue", "urgent"].includes(queue)) requests = requests.filter((item) => item.status === queue);
+          const queueStatuses = {
+            new: ["submitted"],
+            awaiting_review: ["under_review", "under_pharmacy_review"],
+            beneficiary_contact: ["contacting_beneficiary"],
+            awaiting_quote: ["checking_availability", "prescription_verification"],
+            needs_information: ["awaiting_information", "additional_information_required"],
+          };
+          if (queueStatuses[queue]) requests = requests.filter((item) => queueStatuses[queue].includes(item.status));
+          else if (queue && !["all", "overdue", "urgent"].includes(queue)) requests = requests.filter((item) => item.status === queue);
           if (queue === "urgent") requests = requests.filter((item) => item.urgent);
+          if (queue === "overdue") requests = requests.filter((item) => item.overdue);
           if (search) requests = requests.filter((item) => JSON.stringify(item).toLowerCase().includes(search));
           return send(res, 200, { requests });
         }
         const requestId = path[2];
         const row = await getRequestRow(requestId);
         if (!row) return fail(res, 404, "Medication request not found.");
-        if (req.method === "GET" && path.length === 3) {
-          const request = requestFromRow(row);
-          const refs = (request.fileReferences || []).map((item) => item.fileReference).filter(Boolean);
-          if (refs.length) {
-            const files = await sql`SELECT id, file_name FROM protected_files WHERE id = ANY(${refs})`;
-            request.files = files.map((file) => ({ id: file.id, fileReference: file.id, fileName: file.file_name, viewUrl: `/api/v1/admin/request-files/${file.id}` }));
+          if (req.method === "GET" && path.length === 3) {
+          const request = staffRequestFromRow(row, user);
+          if (hasRole(user, ["admin", "pharmacist"])) {
+            const refs = (request.fileReferences || []).map((item) => typeof item === "string" ? item : item.fileReference).filter(Boolean);
+            const messageRefs = (request.customerMessages || []).flatMap((message) => (message.attachments || []).map((attachment) => attachment.fileReference || attachment.id)).filter(Boolean);
+            const requestFiles = refs.length ? await sql`SELECT id, file_name FROM protected_files WHERE kind='request' AND id = ANY(${refs})` : [];
+            const messageFiles = messageRefs.length ? await sql`SELECT id, file_name FROM protected_files WHERE kind='message' AND target_id=${requestId} AND id = ANY(${messageRefs})` : [];
+            request.files = [
+              ...requestFiles.map((file) => ({ id: file.id, fileReference: file.id, fileName: file.file_name, viewUrl: `/api/v1/admin/request-files/${file.id}` })),
+              ...messageFiles.map((file) => ({ id: file.id, fileReference: file.id, fileName: file.file_name, viewUrl: `/api/v1/admin/requests/${requestId}/message-attachments/${file.id}` })),
+            ];
           }
           return send(res, 200, { request });
         }
+        if (req.method === "GET" && path[3] === "message-attachments" && path[4]) {
+          if (!requireRole(user, res, ["admin", "pharmacist"])) return;
+          const files = await sql`SELECT * FROM protected_files WHERE id=${path[4]} AND kind='message' AND target_id=${requestId}`;
+          if (!files[0]) return fail(res, 404, "Message attachment not found.");
+          await audit(user.id, "message_attachment.viewed_by_staff", "protected_file", path[4], { ownerId: row.owner_user_id, requestId });
+          return streamPrivateBlob(res, files[0].blob_url, files[0].content_type, files[0].file_name);
+        }
         if (path[3] === "quote") {
+          if (!requireRole(user, res, ["admin", "pharmacist"])) return;
           if (req.method === "GET" && path.length === 4) {
             const rows = await sql`SELECT * FROM quotes WHERE request_id=${requestId}`;
             return send(res, 200, { quote: rows[0] ? { ...quoteTotals(rows[0].data), id: rows[0].id, quoteNumber: rows[0].quote_number, status: rows[0].status, expiresAt: rows[0].data.expiresAt } : null });
           }
           if (req.method === "PUT" && path.length === 4) {
             const data = quoteTotals(await readJson(req));
-            const existing = await sql`SELECT id FROM quotes WHERE request_id=${requestId}`;
+            if (!Array.isArray(data.items) || !data.items.length) return fail(res, 400, "Add at least one quote item.");
+            if (!/^[A-Z]{3}$/.test(String(data.currency || ""))) return fail(res, 400, "Use a valid three-letter currency code.");
+            if (!data.expiresAt || !Number.isFinite(new Date(data.expiresAt).getTime()) || new Date(data.expiresAt).getTime() <= Date.now()) return fail(res, 400, "Set a future quote expiration date and time.");
+            if (data.items.some((item) => !String(item.medicationName || "").trim() || !["available", "partial", "unavailable"].includes(item.availability) || (item.availability !== "unavailable" && (!(Number(item.quotedQuantity) > 0) || !Number.isInteger(Number(item.quotedQuantity)) || Number(item.unitPrice) < 0)) || (item.availability !== "available" && !String(item.pharmacyNote || "").trim()))) return fail(res, 400, "Complete every quote item, quantity, price, availability, and required note.");
+            const existing = await sql`SELECT id, status, data FROM quotes WHERE request_id=${requestId}`;
             const id = existing[0]?.id || randomUUID();
+            if (existing[0] && !["draft", "change_requested"].includes(existing[0].status) && !(existing[0].status === "sent" && new Date(existing[0].data?.expiresAt).getTime() <= Date.now())) return fail(res, 409, "This quote can no longer be edited.");
             if (existing[0]) await sql`UPDATE quotes SET data=${JSON.stringify(data)}::jsonb, status='draft', updated_at=now() WHERE id=${id}`;
             else await sql`INSERT INTO quotes (id, request_id, quote_number, data) VALUES (${id}, ${requestId}, ${numberCode('Q')}, ${JSON.stringify(data)}::jsonb)`;
             const saved = await sql`SELECT * FROM quotes WHERE id=${id}`;
             return send(res, 200, { quote: { ...saved[0].data, id, quoteNumber: saved[0].quote_number, status: saved[0].status } });
           }
           if (req.method === "POST" && path[4] === "send") {
-            const quotes = await sql`SELECT id FROM quotes WHERE request_id=${requestId}`;
+            const quotes = await sql`SELECT id, status, data FROM quotes WHERE request_id=${requestId}`;
             if (!quotes[0]) return fail(res, 409, "Save the quote before sending it.");
+            if (quotes[0].status !== "draft") return fail(res, 409, "Only a saved draft quote can be sent.");
+            if (!quotes[0].data?.expiresAt || new Date(quotes[0].data.expiresAt).getTime() <= Date.now()) return fail(res, 409, "Update the quote expiration before sending it.");
             await sql`UPDATE quotes SET status='sent', sent_at=now(), updated_at=now() WHERE request_id=${requestId}`;
-            await sql`UPDATE medication_requests SET status='quote_ready', updated_at=now() WHERE id=${requestId}`;
-            await audit(user.id, "quote.sent", "medication_request", requestId);
+            const event = { id: randomUUID(), status: "quote_ready", customerLabel: "Quote ready", note: "Your pharmacy quote is ready to review.", createdAt: new Date().toISOString() };
+            await sql`UPDATE medication_requests SET status='quote_ready', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+            await audit(user.id, "quote.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
+            await notify(row.owner_user_id, "Your quote is ready", "Review the itemized pharmacy quote before it expires.", `/dashboard/requests/${requestId}/quote`, "Review quote");
             return send(res, 200, { ok: true });
           }
         }
         if (req.method === "POST" && path[3] === "status") {
           const body = await readJson(req);
-          const status = String(body.status || body.nextStatus || "under_review");
+          const status = String(body.status || body.nextStatus || "under_pharmacy_review");
+          const allowedStatuses = ["under_review", "under_pharmacy_review", "additional_information_required", "contacting_beneficiary", "prescription_verification", "checking_availability"];
+          if (!allowedStatuses.includes(status)) return fail(res, 400, "Choose a valid pharmacy status.");
           const event = { id: randomUUID(), status, customerLabel: statusLabel(status), note: body.note || "Status updated by Hakim Plus.", createdAt: new Date().toISOString() };
           await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          await audit(user.id, "request.status_updated", "medication_request", requestId, { ownerId: row.owner_user_id, status });
+          await notify(row.owner_user_id, "Request updated", event.note, `/dashboard/requests/${requestId}`, "View request");
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "internal-notes") {
           const body = await readJson(req);
-          const item = { id: randomUUID(), note: body.note, author: { name: user.name }, createdAt: new Date().toISOString() };
+          const note = String(body.note || "").trim();
+          if (!note) return fail(res, 400, "Enter an internal note.");
+          const item = { id: randomUUID(), note, author: { name: user.name }, createdAt: new Date().toISOString() };
           await sql`UPDATE medication_requests SET internal_notes=internal_notes || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          await audit(user.id, "request.internal_note_added", "medication_request", requestId, { ownerId: row.owner_user_id });
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "customer-messages") {
           const body = await readJson(req);
-          const item = { id: randomUUID(), message: body.message, author: { name: "Hakim Plus" }, createdAt: new Date().toISOString() };
+          const message = String(body.message || "").trim();
+          if (!message) return fail(res, 400, "Enter a customer message.");
+          const item = { id: randomUUID(), senderType: "staff", senderName: user.name || "Hakim Plus Pharmacy", message, author: { name: "Hakim Plus" }, createdAt: new Date().toISOString() };
           await sql`UPDATE medication_requests SET customer_messages=customer_messages || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          await audit(user.id, "staff_message.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
+          await notify(row.owner_user_id, "New message from Hakim Plus", "A staff member sent an update about your medication request.", `/dashboard/requests/${requestId}/messages`, "Read message");
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && ["cancel", "unable-to-fulfill", "request-information"].includes(path[3])) {
           const status = path[3] === "cancel" ? "cancelled" : path[3] === "unable-to-fulfill" ? "unable_to_fulfill" : "awaiting_information";
-          await sql`UPDATE medication_requests SET status=${status}, updated_at=now() WHERE id=${requestId}`;
+          const body = await readJson(req);
+          const text = String(path[3] === "request-information" ? body.message : body.reason || "").trim();
+          if (!text) return fail(res, 400, path[3] === "request-information" ? "Enter the information the customer should provide." : "A reason is required.");
+          const event = { id: randomUUID(), status, customerLabel: statusLabel(status), note: text, createdAt: new Date().toISOString() };
+          if (path[3] === "request-information") {
+            const message = { id: randomUUID(), senderType: "staff", senderName: user.name || "Hakim Plus Pharmacy", message: text, author: { name: "Hakim Plus" }, createdAt: event.createdAt };
+            await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, customer_messages=customer_messages || ${JSON.stringify([message])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          } else {
+            await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          }
+          await audit(user.id, `request.${path[3]}`, "medication_request", requestId, { ownerId: row.owner_user_id, reason: text.slice(0, 160) });
+          await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request");
           return send(res, 200, { ok: true });
         }
-        if (req.method === "POST" && path[3] === "beneficiary-contact") return send(res, 200, { ok: true });
+        if (req.method === "POST" && path[3] === "beneficiary-contact") {
+          const body = await readJson(req);
+          const outcome = String(body.outcome || "").trim();
+          const note = String(body.note || "").trim();
+          if (!outcome) return fail(res, 400, "Choose a contact outcome.");
+          if (!row.beneficiary_data?.contactConsent) return fail(res, 409, "Beneficiary contact is not authorized for this request.");
+          const item = { id: randomUUID(), note: `Beneficiary contact (${outcome.replaceAll("_", " ")}): ${note || "No note provided."}`, author: { name: user.name }, createdAt: new Date().toISOString(), kind: "beneficiary_contact", outcome };
+          await sql`UPDATE medication_requests SET internal_notes=internal_notes || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+          await audit(user.id, "beneficiary.contact_recorded", "medication_request", requestId, { ownerId: row.owner_user_id, outcome });
+          return send(res, 200, { ok: true });
+        }
       }
       if (path[1] === "request-files" && req.method === "GET") {
-        const rows = await sql`SELECT * FROM protected_files WHERE id=${path[2]}`;
+        if (!requireRole(user, res, ["admin", "pharmacist"])) return;
+        const rows = await sql`SELECT * FROM protected_files WHERE id=${path[2]} AND kind='request'`;
         if (!rows[0]) return fail(res, 404, "Protected file not found.");
         await audit(user.id, "protected_file.viewed", "protected_file", path[2]);
         return streamPrivateBlob(res, rows[0].blob_url, rows[0].content_type, rows[0].file_name);
       }
       if (path[1] === "bank-transfers") {
+        if (!requireRole(user, res, ["admin", "pharmacist"])) return;
         if (req.method === "GET" && path.length === 2) {
           const rows = await sql`SELECT t.*, r.request_number, b.data beneficiary_data, p.email customer_email, p.full_name customer_name FROM bank_transfers t JOIN medication_requests r ON r.id=t.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=t.owner_user_id ORDER BY t.created_at DESC`;
           const filter = url.searchParams.get("status") || "pending";
@@ -532,52 +838,203 @@ export default async function handler(req, res) {
           return send(res, 200, { transfers: filtered.map((row) => ({ id: row.id, transferNumber: row.transfer_number, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, transferReference: row.transfer_reference, transferDate: row.transfer_date, requestNumber: row.request_number, beneficiaryName: row.beneficiary_data.fullName, customerName: row.customer_name, customerEmail: row.customer_email, createdAt: row.created_at, rejectionReason: row.rejection_reason })) });
         }
         const transferId = path[2];
-        const rows = await sql`SELECT * FROM bank_transfers WHERE id=${transferId}`;
+        const rows = await sql`SELECT t.*, q.data quote_data FROM bank_transfers t JOIN quotes q ON q.id=t.quote_id WHERE t.id=${transferId}`;
         if (!rows[0]) return fail(res, 404, "Transfer not found.");
         if (req.method === "GET" && path[3] === "receipt") {
           await audit(user.id, "bank_transfer.receipt_viewed", "bank_transfer", transferId);
           return streamPrivateBlob(res, rows[0].blob_url, rows[0].content_type, rows[0].file_name);
         }
         if (req.method === "POST" && path[3] === "approve") {
-          if (rows[0].status !== "pending") return fail(res, 409, "Only a pending transfer can be approved.");
           const body = await readJson(req);
           const paymentId = randomUUID();
           const orderId = randomUUID();
-          await sql`UPDATE bank_transfers SET status='approved', reviewed_by=${user.id}, review_note=${String(body.note || '')}, reviewed_at=now() WHERE id=${transferId} AND status='pending'`;
+          const reviewed = await sql`UPDATE bank_transfers SET status='approved', reviewed_by=${user.id}, review_note=${String(body.note || '')}, reviewed_at=now() WHERE id=${transferId} AND status='pending' RETURNING id`;
+          if (!reviewed[0]) return fail(res, 409, "Only a pending transfer can be approved.");
           await sql`INSERT INTO payments (id, transfer_id, request_id, owner_user_id, payment_number, amount_minor, currency) VALUES (${paymentId}, ${transferId}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${numberCode('PAY')}, ${rows[0].amount_minor}, ${rows[0].currency}) ON CONFLICT (transfer_id) DO NOTHING`;
           const payments = await sql`SELECT id FROM payments WHERE transfer_id=${transferId}`;
-          await sql`INSERT INTO orders (id, payment_id, request_id, owner_user_id, order_number) VALUES (${orderId}, ${payments[0].id}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${numberCode('ORD')}) ON CONFLICT (request_id) DO NOTHING`;
+          const orderData = { items: rows[0].quote_data?.items || [], statusHistory: [{ id: randomUUID(), status: "payment_confirmed", customerLabel: "Payment confirmed", note: "Your bank transfer was verified.", createdAt: new Date().toISOString() }], internalTimeline: [{ id: randomUUID(), label: "Order created after payment verification", createdAt: new Date().toISOString(), actor: { name: user.name } }] };
+          await sql`INSERT INTO orders (id, payment_id, request_id, owner_user_id, order_number, data) VALUES (${orderId}, ${payments[0].id}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${numberCode('ORD')}, ${JSON.stringify(orderData)}::jsonb) ON CONFLICT (request_id) DO NOTHING`;
           await sql`UPDATE medication_requests SET status='paid', updated_at=now() WHERE id=${rows[0].request_id}`;
-          await audit(user.id, "bank_transfer.approved", "bank_transfer", transferId);
+          await audit(user.id, "bank_transfer.approved", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
+          await notify(rows[0].owner_user_id, "Payment confirmed", "Your bank transfer was verified and the pharmacy order was created.", "/dashboard/orders", "Track order");
           return send(res, 200, { ok: true, paymentId: payments[0].id });
         }
         if (req.method === "POST" && path[3] === "reject") {
           const body = await readJson(req);
           if (!String(body.reason || "").trim()) return fail(res, 400, "A rejection reason is required.");
-          await sql`UPDATE bank_transfers SET status='rejected', rejection_reason=${String(body.reason).trim()}, reviewed_by=${user.id}, reviewed_at=now() WHERE id=${transferId} AND status='pending'`;
+          const reviewed = await sql`UPDATE bank_transfers SET status='rejected', rejection_reason=${String(body.reason).trim()}, reviewed_by=${user.id}, reviewed_at=now() WHERE id=${transferId} AND status='pending' RETURNING id`;
+          if (!reviewed[0]) return fail(res, 409, "Only a pending transfer can be rejected.");
           await sql`UPDATE medication_requests SET status='awaiting_payment', updated_at=now() WHERE id=${rows[0].request_id}`;
-          await audit(user.id, "bank_transfer.rejected", "bank_transfer", transferId);
+          await audit(user.id, "bank_transfer.rejected", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
+          await notify(rows[0].owner_user_id, "Transfer receipt needs attention", String(body.reason).trim(), `/dashboard/requests/${rows[0].request_id}/payment`, "Resubmit receipt");
           return send(res, 200, { ok: true });
         }
       }
-      if (path[1] === "orders" && req.method === "GET") {
-        const rows = await sql`SELECT o.*, r.request_number, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, pay.amount_minor, pay.currency FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=o.owner_user_id JOIN payments pay ON pay.id=o.payment_id ORDER BY o.created_at DESC`;
-        const orders = rows.map((row) => ({ ...row.data, id: row.id, publicId: row.id, orderNumber: row.order_number, requestNumber: row.request_number, beneficiaryName: row.beneficiary_data.fullName, customerName: row.customer_name, customerEmail: row.customer_email, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, createdAt: row.created_at }));
-        if (path.length === 2) return send(res, 200, { orders });
-        const order = orders.find((item) => item.id === path[2]);
-        return order ? send(res, 200, { order }) : fail(res, 404, "Order not found.");
+      if (path[1] === "orders") {
+        if (!requireRole(user, res, ["admin", "pharmacist", "fulfillment", "delivery_operations"])) return;
+        if (req.method === "GET" && path.length === 2) {
+          const rows = await sql`SELECT o.*, r.request_number, r.data request_data, b.id beneficiary_id, b.data beneficiary_data, pay.payment_number, pay.paid_at, pay.amount_minor, pay.currency, ap.email customer_email, ap.full_name customer_name FROM orders o JOIN medication_requests r ON r.id=o.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN payments pay ON pay.id=o.payment_id JOIN app_profiles ap ON ap.user_id=o.owner_user_id ORDER BY o.created_at DESC`;
+          let orders = rows.map((row) => staffOrderFromRow(row, user));
+          const queue = url.searchParams.get("queue") || "active";
+          const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
+          if (queue === "active") orders = orders.filter((order) => !["completed", "delivered", "cancelled"].includes(order.status));
+          else if (queue === "preparing") orders = orders.filter((order) => ["preparing", "preparing_order"].includes(order.status));
+          else if (queue === "completed") orders = orders.filter((order) => ["delivered", "completed"].includes(order.status));
+          else if (queue) orders = orders.filter((order) => order.status === queue);
+          if (search) orders = orders.filter((order) => JSON.stringify(order).toLowerCase().includes(search));
+          return send(res, 200, { orders });
+        }
+        const orderId = path[2];
+        const row = await getOrderRow(orderId);
+        if (!row) return fail(res, 404, "Order not found.");
+        if (req.method === "GET" && path.length === 3) return send(res, 200, { order: staffOrderFromRow(row, user) });
+        if (req.method === "POST" && path[3] === "delivery-proof") {
+          if (row.status !== "out_for_delivery") return fail(res, 409, "Proof can be uploaded only for an order that is out for delivery.");
+          const body = await readJson(req);
+          const parsed = parseDataUrl(body);
+          const id = randomUUID();
+          const fileName = safeFilename(body.fileName, parsed.contentType);
+          const blob = await put(`delivery-proofs/${orderId}/${id}/${fileName}`, parsed.bytes, { access: "private", contentType: parsed.contentType, addRandomSuffix: false });
+          await sql`INSERT INTO protected_files (id, owner_user_id, kind, target_id, blob_url, pathname, file_name, content_type, size_bytes) VALUES (${id}, ${user.id}, 'delivery', ${orderId}, ${blob.url}, ${blob.pathname}, ${fileName}, ${parsed.contentType}, ${parsed.bytes.length})`;
+          await audit(user.id, "delivery_proof.uploaded", "order", orderId, { ownerId: row.owner_user_id, fileId: id });
+          return send(res, 201, { id, fileReference: id, fileName });
+        }
+        if (req.method === "POST" && path[3] === "status") {
+          const body = await readJson(req);
+          const status = String(body.status || "");
+          if (!["preparing_order", "ready_for_delivery", "completed"].includes(status)) return fail(res, 400, "Choose a valid order status.");
+          const transitions = { payment_confirmed: ["preparing_order"], preparing_order: ["ready_for_delivery"], delivered: ["completed"] };
+          if (!(transitions[row.status] || []).includes(status)) return fail(res, 409, `The order cannot move from ${statusLabel(row.status)} to ${statusLabel(status)}.`);
+          const now = new Date().toISOString();
+          const data = { ...(row.data || {}) };
+          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status, customerLabel: statusLabel(status), note: String(body.note || "").trim() || `Order status changed to ${statusLabel(status)}.`, createdAt: now }];
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: `Status changed to ${statusLabel(status)}`, createdAt: now, actor: { name: user.name } }];
+          await saveOrderState(row, status, data, user.id, "order.status_updated", "Order updated", data.statusHistory.at(-1).note);
+          return send(res, 200, { order: orderFromRow({ ...row, status, data, updated_at: now }) });
+        }
+        if (req.method === "POST" && path[3] === "delivery-assignment") {
+          if (!["ready_for_delivery", "delivery_failed"].includes(row.status)) return fail(res, 409, "Mark the order ready for delivery before assigning it.");
+          const body = await readJson(req);
+          if (!String(body.deliveryPersonId || body.deliveryPersonName || "").trim()) return fail(res, 400, "Enter a delivery person ID or name.");
+          const now = new Date().toISOString();
+          const data = { ...(row.data || {}), deliveryAssignment: { deliveryPersonId: String(body.deliveryPersonId || "").trim(), deliveryPersonName: String(body.deliveryPersonName || "").trim(), deliveryPersonPhone: String(body.deliveryPersonPhone || "").trim(), note: String(body.note || "").trim(), assignedAt: now, assignedBy: user.name } };
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: `Delivery assigned to ${data.deliveryAssignment.deliveryPersonName || data.deliveryAssignment.deliveryPersonId}`, createdAt: now, actor: { name: user.name } }];
+          await sql`UPDATE orders SET data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${orderId}`;
+          await audit(user.id, "order.delivery_assigned", "order", orderId, { ownerId: row.owner_user_id });
+          return send(res, 200, { ok: true });
+        }
+        if (req.method === "POST" && path[3] === "dispatch") {
+          const body = await readJson(req);
+          if (!row.data?.deliveryAssignment) return fail(res, 409, "Assign delivery before dispatching the order.");
+          if (!["ready_for_delivery", "delivery_failed"].includes(row.status)) return fail(res, 409, "Only a ready or failed delivery can be dispatched.");
+          const now = new Date().toISOString();
+          const note = String(body.note || "").trim() || "Your order is out for delivery.";
+          const data = { ...(row.data || {}), deliveryStatusLabel: "Out for delivery", dispatchedAt: now };
+          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "out_for_delivery", customerLabel: "Out for delivery", note, createdAt: now }];
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Order dispatched", createdAt: now, actor: { name: user.name } }];
+          await saveOrderState(row, "out_for_delivery", data, user.id, "order.dispatched", "Order dispatched", note);
+          return send(res, 200, { ok: true });
+        }
+        if (req.method === "POST" && path[3] === "delivery-confirmation") {
+          if (row.status !== "out_for_delivery") return fail(res, 409, "Only an order that is out for delivery can be confirmed delivered.");
+          const body = await readJson(req);
+          const proof = await sql`SELECT id FROM protected_files WHERE id=${body.proofReference} AND kind='delivery' AND target_id=${orderId}`;
+          if (!proof[0]) return fail(res, 400, "Upload valid proof of delivery first.");
+          const now = new Date().toISOString();
+          const note = String(body.deliveryNote || "").trim() || "Delivery confirmed.";
+          const data = { ...(row.data || {}), deliveryStatusLabel: "Delivered", deliveredAt: now, deliveryProofReference: body.proofReference, deliveryNote: note };
+          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "delivered", customerLabel: "Delivered", note, createdAt: now }];
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Delivery confirmed", createdAt: now, actor: { name: user.name } }];
+          await saveOrderState(row, "delivered", data, user.id, "order.delivered", "Order delivered", note);
+          await sql`UPDATE medication_requests SET status='delivered', updated_at=now() WHERE id=${row.request_id}`;
+          return send(res, 200, { ok: true });
+        }
+        if (req.method === "POST" && path[3] === "delivery-failure") {
+          if (row.status !== "out_for_delivery") return fail(res, 409, "Only an order that is out for delivery can record a delivery failure.");
+          const body = await readJson(req);
+          const note = String(body.note || "").trim();
+          if (!note) return fail(res, 400, "A delivery-failure note is required.");
+          const reason = String(body.reason || "other");
+          const now = new Date().toISOString();
+          const data = { ...(row.data || {}), deliveryStatusLabel: "Delivery failed", lastDeliveryFailure: { reason, note, createdAt: now } };
+          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "delivery_failed", customerLabel: "Delivery needs attention", note, createdAt: now }];
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: `Delivery failed: ${reason.replaceAll("_", " ")}`, createdAt: now, actor: { name: user.name } }];
+          await saveOrderState(row, "delivery_failed", data, user.id, "order.delivery_failed", "Delivery needs attention", note);
+          return send(res, 200, { ok: true });
+        }
       }
-      if (path[1] === "analytics" && req.method === "GET") return send(res, 200, { metrics: {}, series: [], generatedAt: new Date().toISOString() });
+      if (path[1] === "analytics" && req.method === "GET") {
+        if (!requireRole(user, res, ["admin"])) return;
+        const range = url.searchParams.get("range") || "30d";
+        const days = { "7d": 7, "30d": 30, "90d": 90, "12m": 365 }[range] || 30;
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+        const customers = (await sql`SELECT count(*)::int count FROM app_profiles WHERE created_at >= ${cutoff}`)[0].count;
+        const beneficiariesCount = (await sql`SELECT count(*)::int count FROM beneficiaries WHERE created_at >= ${cutoff}`)[0].count;
+        const requestsSubmitted = (await sql`SELECT count(*)::int count FROM medication_requests WHERE created_at >= ${cutoff}`)[0].count;
+        const requestsFulfilled = (await sql`SELECT count(*)::int count FROM medication_requests WHERE created_at >= ${cutoff} AND status IN ('delivered','completed')`)[0].count;
+        const quoteStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE status='approved')::int approved FROM quotes WHERE created_at >= ${cutoff}`)[0];
+        const repeatStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE request_count > 1)::int repeat FROM (SELECT owner_user_id, count(*) request_count FROM medication_requests WHERE created_at >= ${cutoff} GROUP BY owner_user_id) owners`)[0];
+        const orderStats = (await sql`SELECT COALESCE(avg(p.amount_minor),0)::float8 average_minor, percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (o.updated_at-o.created_at))/3600) FILTER (WHERE o.status IN ('delivered','completed')) median_hours FROM orders o JOIN payments p ON p.id=o.payment_id WHERE o.created_at >= ${cutoff}`)[0];
+        const outcomes = await sql`SELECT status, count(*)::int value FROM orders WHERE created_at >= ${cutoff} GROUP BY status ORDER BY value DESC`;
+        return send(res, 200, { metrics: { customers, beneficiaries: beneficiariesCount, requestsSubmitted, requestsFulfilled, quoteApprovalRate: quoteStats.total ? quoteStats.approved / quoteStats.total * 100 : 0, repeatCustomerRate: repeatStats.total ? repeatStats.repeat / repeatStats.total * 100 : 0, averageOrderValue: Number(orderStats.average_minor || 0) / 100, medianFulfillmentHours: Number(orderStats.median_hours || 0) }, currency: "ETB", requestsByCustomerCountry: [], fulfillmentOutcomes: outcomes.map((item) => ({ key: item.status, label: statusLabel(item.status), value: item.value, percent: outcomes.reduce((sum, entry) => sum + entry.value, 0) ? item.value / outcomes.reduce((sum, entry) => sum + entry.value, 0) * 100 : 0 })), generatedAt: new Date().toISOString() });
+      }
       if (path[1] === "audit-logs" && req.method === "GET") {
-        const rows = await sql`SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 100`;
-        return send(res, 200, { events: rows });
+        if (!requireRole(user, res, ["admin"])) return;
+        const rows = await sql`SELECT a.*, p.email actor_email, p.full_name actor_name, p.roles actor_roles FROM audit_events a LEFT JOIN app_profiles p ON p.user_id=a.actor_user_id ORDER BY a.created_at DESC LIMIT 200`;
+        const action = String(url.searchParams.get("action") || "").toLowerCase();
+        const actor = String(url.searchParams.get("actor") || "").toLowerCase();
+        const entity = String(url.searchParams.get("entity") || "").toLowerCase();
+        const dateFrom = url.searchParams.get("dateFrom");
+        const dateTo = url.searchParams.get("dateTo");
+        const logs = rows.filter((item) => (!action || item.event_type.toLowerCase().includes(action)) && (!actor || `${item.actor_email || ""} ${item.actor_user_id || ""}`.toLowerCase().includes(actor)) && (!entity || `${item.target_type || ""} ${item.target_id || ""}`.toLowerCase().includes(entity)) && (!dateFrom || new Date(item.created_at) >= new Date(dateFrom)) && (!dateTo || new Date(item.created_at) < new Date(`${dateTo}T23:59:59.999Z`))).slice(0, 100).map((item) => ({ id: item.id, createdAt: item.created_at, actor: { displayName: item.actor_name, email: item.actor_email, role: item.actor_roles?.join(", ") }, action: item.event_type, actionLabel: item.event_type.replaceAll("_", " ").replaceAll(".", " · "), entityType: item.target_type, entityId: item.target_id, entityPublicId: item.target_id, result: "recorded", contextLabel: item.metadata?.status || item.metadata?.outcome }));
+        return send(res, 200, { logs, nextCursor: "" });
       }
-      if (path[1] === "security" && path[2] === "overview" && req.method === "GET") return send(res, 200, { databaseConnected: true, privateStorageConnected: true, authenticationConnected: true, recentSecurityEvents: [] });
+      if (path[1] === "security" && path[2] === "overview" && req.method === "GET") {
+        if (!requireRole(user, res, ["admin"])) return;
+        const checkedAt = new Date().toISOString();
+        const securityEventCount = (await sql`SELECT count(*)::int count FROM audit_events WHERE created_at > now() - interval '24 hours' AND (event_type ILIKE '%denied%' OR event_type ILIKE '%failed%')`)[0].count;
+        return send(res, 200, { failedSignIns: { status: "unknown", value: "Provider managed", detail: "Review sign-in attempts in Neon Auth.", checkedAt }, suspiciousEvents: { status: securityEventCount ? "attention" : "healthy", value: securityEventCount, detail: "Recorded denied or failed server events in the last 24 hours.", checkedAt }, activeStaffSessions: { status: "unknown", value: "Provider managed", detail: "Active sessions remain in Neon Auth.", checkedAt }, uploadScanning: { status: "unknown", value: "Not configured", detail: "Private files are type and size validated; malware scanning is not yet connected.", checkedAt }, paymentWebhooks: { status: "verified", value: "Not applicable", detail: "Payments use manually verified bank-transfer receipts.", checkedAt }, backupRestore: { status: "unknown", value: "Neon managed", detail: "Schedule and document a restore drill before launch.", checkedAt }, generatedAt: checkedAt });
+      }
     }
 
-    if (path[0] === "notifications") return send(res, 200, path[1] === "unread-count" ? { unreadCount: 0 } : { notifications: [] });
-    if (path[0] === "communication-preferences") return send(res, 200, { preferences: { email: true, sms: false, orderUpdates: true, quoteUpdates: true } });
-    if (path[0] === "account-activity") return send(res, 200, { events: [] });
+    if (path[0] === "notifications") {
+      if (req.method === "GET" && path[1] === "unread-count") {
+        const count = (await sql`SELECT count(*)::int count FROM notifications WHERE owner_user_id=${user.id} AND read_at IS NULL`)[0].count;
+        return send(res, 200, { unreadCount: count });
+      }
+      if (req.method === "GET" && path.length === 1) {
+        const unreadOnly = url.searchParams.get("view") === "unread";
+        const rows = unreadOnly ? await sql`SELECT * FROM notifications WHERE owner_user_id=${user.id} AND read_at IS NULL ORDER BY created_at DESC LIMIT 100` : await sql`SELECT * FROM notifications WHERE owner_user_id=${user.id} ORDER BY created_at DESC LIMIT 100`;
+        return send(res, 200, { notifications: rows.map(notificationFromRow), nextCursor: "" });
+      }
+      if (req.method === "POST" && path[1] === "read-all") {
+        await sql`UPDATE notifications SET read_at=COALESCE(read_at, now()) WHERE owner_user_id=${user.id}`;
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === "POST" && path[2] === "read") {
+        const rows = await sql`UPDATE notifications SET read_at=COALESCE(read_at, now()) WHERE id=${path[1]} AND owner_user_id=${user.id} RETURNING id`;
+        return rows[0] ? send(res, 200, { ok: true }) : fail(res, 404, "Notification not found.");
+      }
+    }
+    if (path[0] === "communication-preferences") {
+      const defaults = { emailEnabled: true, smsEnabled: false, whatsappEnabled: false, preferredLanguage: "en", timezone: "Africa/Addis_Ababa" };
+      if (req.method === "GET") {
+        const rows = await sql`SELECT data FROM communication_preferences WHERE user_id=${user.id}`;
+        return send(res, 200, { preferences: { ...defaults, ...(rows[0]?.data || {}) } });
+      }
+      if (req.method === "PUT") {
+        const body = await readJson(req);
+        const preferences = { emailEnabled: Boolean(body.emailEnabled), smsEnabled: Boolean(body.smsEnabled), whatsappEnabled: Boolean(body.whatsappEnabled), preferredLanguage: ["en", "am", "om"].includes(body.preferredLanguage) ? body.preferredLanguage : "en", timezone: String(body.timezone || defaults.timezone).slice(0, 80) };
+        await sql`INSERT INTO communication_preferences (user_id, data) VALUES (${user.id}, ${JSON.stringify(preferences)}::jsonb) ON CONFLICT (user_id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`;
+        await audit(user.id, "communication_preferences.updated", "account", user.id, { ownerId: user.id });
+        return send(res, 200, { preferences });
+      }
+    }
+    if (path[0] === "account-activity" && req.method === "GET") {
+      const rows = await sql`SELECT a.*, p.email actor_email, p.full_name actor_name FROM audit_events a LEFT JOIN app_profiles p ON p.user_id=a.actor_user_id WHERE a.actor_user_id=${user.id} OR a.metadata->>'ownerId'=${user.id} ORDER BY a.created_at DESC LIMIT 100`;
+      const events = rows.map((item) => ({ id: item.id, createdAt: item.created_at, customerLabel: item.event_type.replaceAll("_", " ").replaceAll(".", " · "), actorLabel: item.actor_user_id === user.id ? "You" : item.actor_name || "Hakim Plus", entityLabel: item.target_type, note: item.metadata?.status ? statusLabel(item.metadata.status) : undefined }));
+      return send(res, 200, { events, nextCursor: "" });
+    }
     return fail(res, 404, "API route not found.");
   } catch (error) {
     console.error("Hakim Plus API error", error);

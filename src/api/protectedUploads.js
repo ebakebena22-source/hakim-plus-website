@@ -18,21 +18,6 @@ function readAsDataUrl(file) {
   });
 }
 
-function putFile(uploadUrl, file, headers, onProgress) {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open("PUT", uploadUrl);
-    Object.entries(headers || {}).forEach(([name, value]) => request.setRequestHeader(name, value));
-    if (!headers?.["Content-Type"]) request.setRequestHeader("Content-Type", file.type);
-    request.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
-    });
-    request.addEventListener("load", () => request.status >= 200 && request.status < 300 ? resolve() : reject(new Error("The protected file upload did not complete.")));
-    request.addEventListener("error", () => reject(new Error("The protected file upload failed. Check your connection and try again.")));
-    request.send(file);
-  });
-}
-
 export async function uploadProtectedRequestFile(file, onProgress) {
   const validationError = validateRequestFile(file);
   if (validationError) throw new Error(validationError);
@@ -53,17 +38,15 @@ export async function uploadProtectedDeliveryProof(orderId, file, onProgress) {
   if (validationError) throw new Error(validationError);
 
   const encodedOrderId = encodeURIComponent(String(orderId));
-  const intent = await apiRequest(`/api/v1/admin/orders/${encodedOrderId}/delivery-proof/upload-intents`, {
+  onProgress?.(10);
+  const dataUrl = await readAsDataUrl(file);
+  onProgress?.(45);
+  const completed = await apiRequest(`/api/v1/admin/orders/${encodedOrderId}/delivery-proof`, {
     method: "POST",
-    body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size }),
+    body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size, dataUrl }),
   });
-
-  await putFile(intent.uploadUrl, file, intent.headers, onProgress);
-
-  return apiRequest(`/api/v1/admin/orders/${encodedOrderId}/delivery-proof/complete`, {
-    method: "POST",
-    body: JSON.stringify({ uploadToken: intent.uploadToken }),
-  });
+  onProgress?.(100);
+  return completed;
 }
 
 export async function uploadProtectedMessageAttachment(requestId, file, onProgress) {
@@ -71,15 +54,13 @@ export async function uploadProtectedMessageAttachment(requestId, file, onProgre
   if (validationError) throw new Error(validationError);
 
   const encodedRequestId = encodeURIComponent(String(requestId));
-  const intent = await apiRequest(`/api/v1/medication-requests/${encodedRequestId}/message-attachments/upload-intents`, {
+  onProgress?.(10);
+  const dataUrl = await readAsDataUrl(file);
+  onProgress?.(45);
+  const completed = await apiRequest(`/api/v1/medication-requests/${encodedRequestId}/message-attachments`, {
     method: "POST",
-    body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size }),
+    body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size, dataUrl }),
   });
-
-  await putFile(intent.uploadUrl, file, intent.headers, onProgress);
-
-  return apiRequest(`/api/v1/medication-requests/${encodedRequestId}/message-attachments/complete`, {
-    method: "POST",
-    body: JSON.stringify({ uploadToken: intent.uploadToken }),
-  });
+  onProgress?.(100);
+  return completed;
 }

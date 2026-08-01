@@ -33,7 +33,7 @@ export function validateRequestStep(request, step) {
       if (!medication.quantity.trim()) errors[`medication-${index}-quantity`] = "Enter the requested quantity.";
     });
   }
-  if (step >= 2 && request.method === "description" && !request.description.trim()) errors.description = "Describe what the beneficiary needs.";
+  if (step >= 2 && request.method === "description" && request.description.trim().length < 10) errors.description = "Describe what the beneficiary needs in at least 10 characters.";
   if (step >= 4 && !request.accuracyConfirmed) errors.accuracyConfirmed = "Confirm that the information is accurate before submitting.";
   return errors;
 }

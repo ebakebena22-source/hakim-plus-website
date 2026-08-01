@@ -47,11 +47,12 @@ export function formatMinorAmount(minor, currency = "ETB") {
 export function validateQuote(quote) {
   const errors = {};
   if (!/^[A-Z]{3}$/.test(quote.currency)) errors.currency = "Use a valid three-letter currency code.";
-  if (!quote.expiresAt) errors.expiresAt = "Set a quote expiration date and time.";
+  if (!quote.expiresAt || !Number.isFinite(new Date(quote.expiresAt).getTime()) || new Date(quote.expiresAt).getTime() <= Date.now()) errors.expiresAt = "Set a future quote expiration date and time.";
   if (!quote.items.length) errors.items = "Add at least one quote item.";
   quote.items.forEach((item, index) => {
     if (!item.medicationName.trim()) errors[`item-${index}-name`] = "Enter the medication or product name.";
-    if (item.availability !== "unavailable" && (!(Number(item.quotedQuantity) > 0) || Number(item.unitPrice) < 0)) errors[`item-${index}-pricing`] = "Enter a valid quantity and unit price.";
+    if (!["available", "partial", "unavailable"].includes(item.availability)) errors[`item-${index}-pricing`] = "Choose a valid availability option.";
+    if (item.availability !== "unavailable" && (!(Number(item.quotedQuantity) > 0) || !Number.isInteger(Number(item.quotedQuantity)) || Number(item.unitPrice) < 0)) errors[`item-${index}-pricing`] = "Enter a whole-number quantity and a valid unit price.";
     if (item.availability !== "available" && !item.pharmacyNote.trim()) errors[`item-${index}-note`] = "Explain partial or unavailable items to the customer.";
   });
   return errors;
@@ -74,7 +75,7 @@ export function createQuotePayload(quote) {
     serviceFee: String(quote.serviceFee),
     discount: String(quote.discount),
     tax: String(quote.tax),
-    expiresAt: quote.expiresAt,
+    expiresAt: new Date(quote.expiresAt).toISOString(),
     pharmacyNotes: quote.pharmacyNotes.trim(),
   };
 }
