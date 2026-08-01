@@ -89,10 +89,26 @@ async function handleAuth(req, res, action) {
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "The account could not be created.");
-    const user = payload.user || payload;
+    let user = payload.user || payload;
     if (user?.id) await upsertProfile(user, { firstName: form.firstName, lastName: form.lastName, phone: form.phone, country: form.country });
-    const requiresVerification = user?.emailVerified !== true && !payload.session;
-    return send(res, 200, { user: requiresVerification ? null : await publicUser(user), requiresVerification });
+
+    // Neon Auth can be configured to allow password sign-up without email
+    // verification. Its sign-up response does not always include a session in
+    // that mode, so establish the session explicitly instead of incorrectly
+    // sending every new customer to a verification page that never emails.
+    let accountReady = Boolean(payload.session);
+    if (!accountReady) {
+      const signInUpstream = await callAuth(req, "/sign-in/email", { method: "POST", body: { email: body.email, password: body.password } });
+      const signInPayload = authPayload(await signInUpstream.json().catch(() => ({})));
+      if (signInUpstream.ok) {
+        copyAuthCookies(signInUpstream, res);
+        user = signInPayload.user || user;
+        accountReady = true;
+      }
+    }
+
+    const requiresVerification = !accountReady && user?.emailVerified !== true;
+    return send(res, 200, { user: accountReady ? await publicUser(user) : null, requiresVerification });
   }
   if (action === "login" && method === "POST") {
     const form = await readJson(req);

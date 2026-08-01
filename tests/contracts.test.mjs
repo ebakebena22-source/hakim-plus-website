@@ -146,3 +146,10 @@ test("customer dashboard loads live portal data instead of placeholder counts", 
   assert.match(portal, /actionRequests/);
   assert.match(portal, /recentActivity/);
 });
+
+test("signup establishes a session when Neon does not require verification", async () => {
+  const api = await source("api/v1/[...path].js");
+  assert.match(api, /const signInUpstream = await callAuth\(req, "\/sign-in\/email"/);
+  assert.match(api, /copyAuthCookies\(signInUpstream, res\)/);
+  assert.match(api, /const requiresVerification = !accountReady/);
+});
