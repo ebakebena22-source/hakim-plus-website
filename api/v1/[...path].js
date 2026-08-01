@@ -269,6 +269,12 @@ function parseDataUrl(receipt) {
   if (!match) throw Object.assign(new Error("Use a valid JPG, PNG, or PDF receipt."), { status: 400 });
   const bytes = Buffer.from(match[2], "base64");
   if (!bytes.length || bytes.length > 2.5 * 1024 * 1024) throw Object.assign(new Error("The receipt must be 2.5 MB or smaller."), { status: 400 });
+  const signatures = {
+    "application/pdf": bytes.subarray(0, 5).toString("ascii") === "%PDF-",
+    "image/png": bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+    "image/jpeg": bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+  };
+  if (!signatures[match[1]]) throw Object.assign(new Error("The uploaded file content does not match its declared type."), { status: 400 });
   return { contentType: match[1], bytes };
 }
 
@@ -282,7 +288,8 @@ async function streamPrivateBlob(res, url, contentType, fileName) {
   if (!result || result.statusCode !== 200) return fail(res, 404, "File not found.");
   res.statusCode = 200;
   res.setHeader("Content-Type", contentType || result.blob.contentType || "application/octet-stream");
-  res.setHeader("Content-Disposition", `inline; filename="${String(fileName).replace(/["\r\n]/g, "")}"`);
+  const disposition = contentType === "application/pdf" ? "attachment" : "inline";
+  res.setHeader("Content-Disposition", `${disposition}; filename="${String(fileName).replace(/["\r\n]/g, "")}"`);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "private, no-store");
   for await (const chunk of result.stream) res.write(chunk);
@@ -992,7 +999,7 @@ export default async function handler(req, res) {
       if (path[1] === "security" && path[2] === "overview" && req.method === "GET") {
         if (!requireRole(user, res, ["admin"])) return;
         const checkedAt = new Date().toISOString();
-        const securityEventCount = (await sql`SELECT count(*)::int count FROM audit_events WHERE created_at > now() - interval '24 hours' AND (event_type ILIKE '%denied%' OR event_type ILIKE '%failed%')`)[0].count;
+        const securityEventCount = (await sql`SELECT count(*)::int count FROM audit_events WHERE created_at > now() - interval '24 hours' AND (event_type LIKE 'auth.%' OR event_type LIKE 'security.%' OR event_type LIKE 'access.denied%')`)[0].count;
         return send(res, 200, { failedSignIns: { status: "unknown", value: "Provider managed", detail: "Review sign-in attempts in Neon Auth.", checkedAt }, suspiciousEvents: { status: securityEventCount ? "attention" : "healthy", value: securityEventCount, detail: "Recorded denied or failed server events in the last 24 hours.", checkedAt }, activeStaffSessions: { status: "unknown", value: "Provider managed", detail: "Active sessions remain in Neon Auth.", checkedAt }, uploadScanning: { status: "unknown", value: "Not configured", detail: "Private files are type and size validated; malware scanning is not yet connected.", checkedAt }, paymentWebhooks: { status: "verified", value: "Not applicable", detail: "Payments use manually verified bank-transfer receipts.", checkedAt }, backupRestore: { status: "unknown", value: "Neon managed", detail: "Schedule and document a restore drill before launch.", checkedAt }, generatedAt: checkedAt });
       }
     }

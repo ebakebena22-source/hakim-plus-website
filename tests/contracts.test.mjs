@@ -74,6 +74,8 @@ test("customer and admin API contracts agree on protected upload payloads", asyn
   assert.match(messages, /fileReferences/);
   assert.match(api, /body\.fileReferences \|\| body\.attachments/);
   assert.match(api, /target_id=\$\{requestId\}/);
+  assert.match(api, /uploaded file content does not match its declared type/);
+  assert.match(api, /bytes\.subarray\(0, 5\)\.toString\("ascii"\) === "%PDF-"/);
 });
 
 test("production API enforces server-side role and workflow boundaries", async () => {
@@ -129,4 +131,10 @@ test("customer past orders and role-aware staff UI use the corrected flows", asy
   assert.match(api, /\["past", "history", "completed"\]\.includes\(view\)/);
   assert.match(requestPage, /canQuote && <section/);
   assert.match(quotePage, /defaultQuoteExpiry/);
+});
+
+test("security overview excludes ordinary fulfillment failures", async () => {
+  const api = await source("api/v1/[...path].js");
+  assert.match(api, /event_type LIKE 'auth\.%'/);
+  assert.doesNotMatch(api, /event_type ILIKE '%failed%'/);
 });
