@@ -56,11 +56,19 @@ function authBaseUrl() {
 async function callAuth(req, endpoint, options = {}) {
   const baseUrl = authBaseUrl();
   if (!baseUrl) throw Object.assign(new Error("Authentication is not configured."), { status: 503 });
+  const allowedOrigins = new Set([
+    "https://hakimpluspharmacy.com",
+    "https://www.hakimpluspharmacy.com",
+    ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+  ]);
+  if (req.headers.origin && !allowedOrigins.has(req.headers.origin)) {
+    throw Object.assign(new Error("This request origin is not allowed."), { status: 403 });
+  }
   const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) };
   if (req.headers.cookie) headers.Cookie = req.headers.cookie;
-  // This request is a trusted server-to-server hop. Forwarding the browser's
-  // custom-domain Origin makes the managed auth service treat the proxy as a
-  // direct cross-origin client and reject valid signups.
+  // Neon Auth validates the server-to-server hop against its own trusted
+  // origin. The customer-facing origin is validated above and never forwarded.
+  headers.Origin = new URL(baseUrl).origin;
   return fetch(`${baseUrl}${endpoint}`, { method: options.method || "GET", headers, body: options.body ? JSON.stringify(options.body) : undefined, redirect: "manual" });
 }
 
