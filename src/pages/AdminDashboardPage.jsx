@@ -11,9 +11,9 @@ const metricDefinitions = [
   ["awaitingQuote", "Awaiting quote", "/admin/requests?queue=awaiting_quote", "requests"],
   ["awaitingApproval", "Awaiting customer approval", "/admin/requests?queue=awaiting_approval", "requests"],
   ["paymentsReceived", "Payments received", "/admin/orders?queue=active", "orders"],
-  ["preparingOrders", "Orders being prepared", "/admin/orders?queue=preparing", "orders"],
-  ["awaitingDelivery", "Awaiting delivery", "/admin/orders?queue=ready_for_delivery", "orders"],
   ["outForDelivery", "Out for delivery", "/admin/orders?queue=out_for_delivery", "orders"],
+  ["completedOrders", "Completed", "/admin/orders?queue=completed", "orders"],
+  ["deliveryFailed", "Delivery failed", "/admin/orders?queue=delivery_failed", "orders"],
 ];
 
 export default function AdminDashboardPage() {

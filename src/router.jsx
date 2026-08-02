@@ -4,7 +4,8 @@ import LandingPage from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import PortalLayout from "./layouts/PortalLayout";
-import { ForgotPasswordPage, LoginPage, ResetPasswordPage, SignupPage, VerifyEmailPage } from "./pages/AuthPages";
+import { ForgotPasswordPage, LoginPage, ResetPasswordPage, SignupPage, SocialAuthCompletePage, VerifyEmailPage } from "./pages/AuthPages";
+import { PrivacyPolicyPage, TermsOfUsePage } from "./pages/LegalPages";
 import { DashboardPage, HelpPage, NotFoundPage, OnboardingPage, ProfilePage } from "./pages/PortalPages";
 import { BeneficiariesPage, BeneficiaryDetailPage, BeneficiaryFormPage } from "./pages/BeneficiaryPages";
 import RequestWizardPage from "./pages/RequestWizardPage";
@@ -48,6 +49,9 @@ export default function SiteRouter() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/auth/social-complete" element={<SocialAuthCompletePage />} />
+          <Route path="/terms" element={<TermsOfUsePage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><PortalLayout /></ProtectedRoute>}>
             <Route index element={<DashboardPage />} />

@@ -1,4 +1,5 @@
 import { apiConfiguration, apiRequest } from "../api/client";
+import { normalizedCountryProfile } from "../profile/countries";
 
 const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
 const localPreviewEnabled = !apiConfiguration.configured && typeof window !== "undefined" && localHosts.has(window.location.hostname);
@@ -53,6 +54,8 @@ const localAuthClient = {
     const accounts = readAccounts();
     if (accounts.some((account) => account.user.email === email)) throw new Error("An account with this email already exists. Sign in instead.");
     if (String(details.password || "").length < 12) throw new Error("Use a password with at least 12 characters.");
+    const countryProfile = normalizedCountryProfile(details.countryCode || details.country);
+    if (!countryProfile) throw new Error("Choose a valid country from the country list.");
     const salt = randomSalt();
     const user = {
       id: crypto.randomUUID(),
@@ -62,7 +65,7 @@ const localAuthClient = {
         firstName: String(details.firstName || "").trim(),
         lastName: String(details.lastName || "").trim(),
         phone: String(details.phone || "").trim(),
-        country: String(details.country || "").trim(),
+        ...countryProfile,
       },
       roles: ["customer"],
       emailVerified: true,
@@ -83,6 +86,9 @@ const localAuthClient = {
     window.localStorage.removeItem(sessionKey);
     return { ok: true };
   },
+  async socialSignIn() {
+    throw new Error("Social sign-in is available only on the production website.");
+  },
   async requestPasswordReset() {
     return { ok: true, localPreview: true };
   },
@@ -95,10 +101,10 @@ const apiAuthClient = {
   getSession: () => apiRequest("/api/v1/auth/session"),
   signIn: (credentials) => apiRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify(credentials) }),
   signUp: (details) => apiRequest("/api/v1/auth/register", { method: "POST", body: JSON.stringify(details) }),
+  socialSignIn: (provider) => apiRequest("/api/v1/auth/social", { method: "POST", body: JSON.stringify({ provider }) }),
   signOut: () => apiRequest("/api/v1/auth/logout", { method: "POST" }),
   requestPasswordReset: (email) => apiRequest("/api/v1/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
   resetPassword: (payload) => apiRequest("/api/v1/auth/reset-password", { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export const authClient = localPreviewEnabled ? localAuthClient : apiAuthClient;
-

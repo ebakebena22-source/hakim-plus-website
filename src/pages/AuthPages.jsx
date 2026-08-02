@@ -1,12 +1,35 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { authClient } from "../auth/authClient";
 import { AuthShell, ConfigurationNotice, Field, LocalPreviewNotice, primaryButtonClass } from "../components/AuthShell";
+import CountryPicker from "../components/CountryPicker";
 
 function FormError({ message }) {
   if (!message) return null;
   return <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">{message}</p>;
+}
+
+function SocialAuthButtons({ disabled = false, onError }) {
+  const [busyProvider, setBusyProvider] = useState("");
+
+  async function continueWith(provider) {
+    onError?.("");
+    setBusyProvider(provider);
+    try {
+      const result = await authClient.socialSignIn(provider);
+      window.location.assign(result.url);
+    } catch (error) {
+      onError?.(error.message);
+      setBusyProvider("");
+    }
+  }
+
+  return <div className="space-y-3"><button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || Boolean(busyProvider)} onClick={() => continueWith("google")}><span className="text-base font-black text-blue-600" aria-hidden="true">G</span>{busyProvider === "google" ? "Connecting…" : "Continue with Google"}</button><button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || Boolean(busyProvider)} onClick={() => continueWith("apple")}><span className="text-lg leading-none" aria-hidden="true">●</span>{busyProvider === "apple" ? "Connecting…" : "Continue with Apple"}</button></div>;
+}
+
+function AuthDivider() {
+  return <div className="my-6 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-slate-200" /><span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">or use email</span><span className="h-px flex-1 bg-slate-200" /></div>;
 }
 
 export function LoginPage() {
@@ -35,6 +58,8 @@ export function LoginPage() {
     <AuthShell eyebrow="Customer portal" title="Welcome back" description="Sign in to manage requests, quotes, payments, and delivery updates." footer={<p>New to Hakim Plus? <Link className="font-bold text-emerald-700 hover:underline" to="/signup">Create an account</Link></p>}>
       {!auth.configured && <ConfigurationNotice />}
       {auth.mode === "local-preview" && <LocalPreviewNotice />}
+      <SocialAuthButtons disabled={!auth.configured} onError={setError} />
+      <AuthDivider />
       <form className="space-y-5" onSubmit={handleSubmit}>
         <FormError message={error} />
         <Field id="login-email" label="Email address" type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
@@ -49,7 +74,7 @@ export function LoginPage() {
 export function SignupPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", country: "", password: "", confirmPassword: "", termsAccepted: false, privacyAccepted: false });
+  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", countryCode: "", password: "", confirmPassword: "", termsAccepted: false, privacyAccepted: false });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -61,7 +86,7 @@ export function SignupPage() {
     event.preventDefault();
     setError("");
     if (form.password !== form.confirmPassword) return setError("Passwords do not match.");
-    if (!form.termsAccepted || !form.privacyAccepted) return setError("You must accept the Terms of Service and Privacy Policy.");
+    if (!form.termsAccepted || !form.privacyAccepted) return setError("You must accept the Terms of Use and Privacy Policy.");
     setBusy(true);
     try {
       const result = await auth.signUp(form);
@@ -77,6 +102,9 @@ export function SignupPage() {
     <AuthShell eyebrow="Create account" title="Start supporting your loved ones" description="Your beneficiary does not need an account. You stay in control of requests, quotes, payments, and updates." footer={<p>Already registered? <Link className="font-bold text-emerald-700 hover:underline" to="/login">Sign in</Link></p>}>
       {!auth.configured && <ConfigurationNotice />}
       {auth.mode === "local-preview" && <LocalPreviewNotice />}
+      <SocialAuthButtons disabled={!auth.configured || !form.termsAccepted || !form.privacyAccepted} onError={setError} />
+      <p className="mt-3 text-xs leading-5 text-slate-500">Select the agreement below before creating an account with Google or Apple.</p>
+      <AuthDivider />
       <form className="space-y-5" onSubmit={handleSubmit}>
         <FormError message={error} />
         <div className="grid gap-5 sm:grid-cols-2">
@@ -86,21 +114,39 @@ export function SignupPage() {
         <Field id="signup-email" label="Email address" type="email" autoComplete="email" required value={form.email} onChange={(event) => update("email", event.target.value)} />
         <div className="grid gap-5 sm:grid-cols-2">
           <Field id="phone" label="Phone number" type="tel" autoComplete="tel" required value={form.phone} onChange={(event) => update("phone", event.target.value)} />
-          <Field id="country" label="Country of residence" autoComplete="country-name" required value={form.country} onChange={(event) => update("country", event.target.value)} />
+          <CountryPicker id="country" required value={form.countryCode} onChange={(value) => update("countryCode", value)} />
         </div>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field id="signup-password" label="Password" type="password" autoComplete="new-password" minLength="12" required value={form.password} onChange={(event) => update("password", event.target.value)} />
           <Field id="confirm-password" label="Confirm password" type="password" autoComplete="new-password" minLength="12" required value={form.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} />
         </div>
         <p className="text-xs leading-5 text-slate-500">Use at least 12 characters. Final password rules will be enforced by the selected identity provider.</p>
-        <div className="space-y-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
-          <label className="flex items-start gap-3"><input className="mt-1 h-4 w-4 accent-emerald-600" type="checkbox" checked={form.termsAccepted} onChange={(event) => update("termsAccepted", event.target.checked)} /><span>I accept the Hakim Plus Terms of Service.</span></label>
-          <label className="flex items-start gap-3"><input className="mt-1 h-4 w-4 accent-emerald-600" type="checkbox" checked={form.privacyAccepted} onChange={(event) => update("privacyAccepted", event.target.checked)} /><span>I accept the Hakim Plus Privacy Policy.</span></label>
-        </div>
+        <label className="flex items-start gap-3 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-700"><input className="mt-1 h-4 w-4 shrink-0 accent-emerald-600" type="checkbox" checked={form.termsAccepted && form.privacyAccepted} onChange={(event) => { update("termsAccepted", event.target.checked); update("privacyAccepted", event.target.checked); }} /><span>By creating an account, you agree to our <Link className="font-bold text-emerald-700 hover:underline" to="/terms">Terms of Use</Link> and <Link className="font-bold text-emerald-700 hover:underline" to="/privacy">Privacy Policy</Link>.</span></label>
         <button className={primaryButtonClass} type="submit" disabled={!auth.configured || busy}>{busy ? "Creating account…" : auth.mode === "local-preview" ? "Create local preview account" : "Create secure account"}</button>
       </form>
     </AuthShell>
   );
+}
+
+export function SocialAuthCompletePage() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const oauthError = Boolean(searchParams.get("error"));
+  const [error, setError] = useState(oauthError ? "Social sign-in could not be completed. Try again or use email and password." : "");
+
+  useEffect(() => {
+    let active = true;
+    if (oauthError) return () => { active = false; };
+    auth.refreshSession().then((user) => {
+      if (!active) return;
+      if (!user) return setError("The social account was verified, but a Hakim Plus session could not be created. Try again.");
+      navigate(user.profile?.countryCode ? "/dashboard" : "/onboarding", { replace: true });
+    }).catch((sessionError) => { if (active) setError(sessionError.message); });
+    return () => { active = false; };
+  }, [auth, navigate, oauthError]);
+
+  return <AuthShell eyebrow="Secure sign-in" title={error ? "Sign-in needs attention" : "Finishing your sign-in"} description="We are securely connecting your account to Hakim Plus." footer={<Link className="font-bold text-emerald-700 hover:underline" to="/login">Return to sign in</Link>}><FormError message={error} />{!error && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900" role="status">Checking your account…</p>}</AuthShell>;
 }
 
 export function ForgotPasswordPage() {

@@ -3,6 +3,7 @@ import { get, put } from "@vercel/blob";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import process from "node:process";
+import { normalizedCountryProfile } from "../../src/profile/countries.js";
 
 const connectionString = process.env.DATABASE_URL || process.env.DATABASE_POSTGRES_URL;
 const sql = connectionString ? neon(connectionString) : null;
@@ -83,6 +84,9 @@ async function handleAuth(req, res, action) {
   if (action === "register" && method === "POST") {
     const form = await readJson(req);
     if (!form.email || !form.firstName || !form.lastName || String(form.password || "").length < 12) return fail(res, 400, "Enter your name, email, and a password with at least 12 characters.");
+    const countryProfile = normalizedCountryProfile(form.countryCode || form.country);
+    if (!countryProfile) return fail(res, 400, "Choose a valid country from the complete country list.");
+    if (form.termsAccepted !== true || form.privacyAccepted !== true) return fail(res, 400, "Agree to the Terms of Use and Privacy Policy to create an account.");
     endpoint = "/sign-up/email";
     body = { email: String(form.email).trim().toLowerCase(), password: form.password, name: `${form.firstName} ${form.lastName}`.trim() };
     const upstream = await callAuth(req, endpoint, { method: "POST", body });
@@ -90,7 +94,7 @@ async function handleAuth(req, res, action) {
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "The account could not be created.");
     let user = payload.user || payload;
-    if (user?.id) await upsertProfile(user, { firstName: form.firstName, lastName: form.lastName, phone: form.phone, country: form.country });
+    if (user?.id) await upsertProfile(user, { firstName: String(form.firstName).trim(), lastName: String(form.lastName).trim(), phone: String(form.phone || "").trim(), ...countryProfile, legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
 
     // Neon Auth can be configured to allow password sign-up without email
     // verification. Its sign-up response does not always include a session in
@@ -118,6 +122,19 @@ async function handleAuth(req, res, action) {
     if (!upstream.ok) return fail(res, 401, payload.message || "Email or password is incorrect.");
     if (payload.user?.id) await upsertProfile(payload.user);
     return send(res, 200, { user: await publicUser(payload.user) });
+  }
+  if (action === "social" && method === "POST") {
+    const form = await readJson(req);
+    const provider = String(form.provider || "").toLowerCase();
+    if (!["google", "apple"].includes(provider)) return fail(res, 400, "Choose Google or Apple sign-in.");
+    const callbackURL = "https://hakimpluspharmacy.com/auth/social-complete";
+    const upstream = await callAuth(req, "/sign-in/social", { method: "POST", body: { provider, callbackURL, errorCallbackURL: `${callbackURL}?error=oauth` } });
+    copyAuthCookies(upstream, res);
+    const payload = authPayload(await upstream.json().catch(() => ({})));
+    if (!upstream.ok) return fail(res, upstream.status, payload.message || `${provider === "google" ? "Google" : "Apple"} sign-in is not available yet.`);
+    const redirectUrl = payload.url || upstream.headers.get("location");
+    if (!redirectUrl) return fail(res, 502, "The account service did not return a social sign-in URL.");
+    return send(res, 200, { url: redirectUrl, provider });
   }
   if (action === "session" && method === "GET") {
     const session = await getAuthSession(req);
@@ -172,6 +189,8 @@ async function upsertProfile(authUser, profile = {}) {
   const roles = existing[0]?.roles?.length ? existing[0].roles : ["customer"];
   if (canBecomeAdmin) for (const role of ["admin", "pharmacist"]) if (!roles.includes(role)) roles.push(role);
   const mergedProfile = { ...(existing[0]?.profile || {}), ...profile };
+  const countryProfile = normalizedCountryProfile(mergedProfile.countryCode || mergedProfile.country || mergedProfile.countryName);
+  if (countryProfile) Object.assign(mergedProfile, countryProfile);
   await sql`INSERT INTO app_profiles (user_id, email, full_name, profile, roles)
     VALUES (${authUser.id}, ${email}, ${authUser.name || `${profile.firstName || ""} ${profile.lastName || ""}`.trim()}, ${JSON.stringify(mergedProfile)}::jsonb, ${roles})
     ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), app_profiles.full_name), profile = app_profiles.profile || EXCLUDED.profile, roles = EXCLUDED.roles, updated_at = now()`;
@@ -223,6 +242,10 @@ async function ensureSchema() {
       id text PRIMARY KEY, payment_id text NOT NULL UNIQUE REFERENCES payments(id), request_id text NOT NULL UNIQUE REFERENCES medication_requests(id),
       owner_user_id text NOT NULL REFERENCES app_profiles(user_id), order_number text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'payment_confirmed',
       data jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`UPDATE orders SET status='payment_confirmed', updated_at=now() WHERE status IN ('preparing','preparing_order','ready_for_delivery')`;
+    await sql`UPDATE orders SET status='completed', updated_at=now() WHERE status='delivered'`;
+    await sql`UPDATE medication_requests SET status='paid', updated_at=now() WHERE status IN ('preparing','preparing_order','ready_for_delivery')`;
+    await sql`UPDATE medication_requests SET status='completed', updated_at=now() WHERE status='delivered'`;
     await sql`CREATE TABLE IF NOT EXISTS audit_events (
       id text PRIMARY KEY, actor_user_id text, event_type text NOT NULL, target_type text, target_id text,
       metadata jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz NOT NULL DEFAULT now())`;
@@ -242,7 +265,7 @@ function numberCode(prefix) {
 }
 
 function statusLabel(status) {
-  const labels = { submitted: "Submitted", under_review: "Under review", under_pharmacy_review: "Under pharmacy review", additional_information_required: "Additional information required", awaiting_information: "Information requested", contacting_beneficiary: "Contacting beneficiary", prescription_verification: "Prescription verification", checking_availability: "Checking availability", quote_ready: "Quote ready", awaiting_payment: "Awaiting payment", payment_verification: "Transfer awaiting verification", paid: "Payment confirmed", payment_confirmed: "Payment confirmed", preparing: "Preparing", preparing_order: "Preparing order", ready_for_delivery: "Ready for delivery", out_for_delivery: "Out for delivery", dispatched: "Dispatched", delivery_failed: "Delivery failed", completed: "Completed", delivered: "Delivered", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill", pending: "Awaiting verification", approved: "Approved", rejected: "Rejected", confirmed: "Confirmed" };
+  const labels = { submitted: "Submitted", under_review: "Under review", under_pharmacy_review: "Under pharmacy review", additional_information_required: "Additional information required", awaiting_information: "Information requested", contacting_beneficiary: "Contacting beneficiary", prescription_verification: "Prescription verification", checking_availability: "Checking availability", quote_ready: "Quote ready", awaiting_payment: "Awaiting payment", payment_verification: "Transfer awaiting verification", paid: "Payment confirmed", payment_confirmed: "Payment confirmed", preparing: "Payment confirmed", preparing_order: "Payment confirmed", ready_for_delivery: "Payment confirmed", out_for_delivery: "Out for delivery", dispatched: "Out for delivery", delivery_failed: "Delivery failed", completed: "Completed", delivered: "Completed", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill", pending: "Awaiting verification", approved: "Approved", rejected: "Rejected", confirmed: "Confirmed" };
   return labels[status] || String(status || "").replaceAll("_", " ");
 }
 
@@ -270,13 +293,34 @@ function requestFromRow(row) {
   const data = row.data || {};
   const terminal = ["delivered", "completed", "cancelled", "unable_to_fulfill"].includes(row.status);
   const updatedAt = new Date(row.updated_at || row.created_at).getTime();
-  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment", "awaiting_information", "additional_information_required"].includes(row.status), urgent: Boolean(data.urgent), overdue: !terminal && Number.isFinite(updatedAt) && Date.now() - updatedAt > 24 * 60 * 60 * 1000, latestUpdate: history.at(-1)?.note, quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
+  const profileCurrency = row.customer_profile?.currency || normalizedCountryProfile(row.customer_profile)?.currency || "USD";
+  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), currency: profileCurrency, beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name, country: row.customer_profile?.countryName || row.customer_profile?.country, currency: profileCurrency } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment", "awaiting_information", "additional_information_required"].includes(row.status), urgent: Boolean(data.urgent), overdue: !terminal && Number.isFinite(updatedAt) && Date.now() - updatedAt > 24 * 60 * 60 * 1000, latestUpdate: history.at(-1)?.note, quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
+}
+
+function customerRequestFromRow(row) {
+  const request = row.request_number ? requestFromRow(row) : { ...row };
+  const internalStatus = request.status;
+  const terminalStatus = ["cancelled", "unable_to_fulfill"].includes(internalStatus) ? internalStatus : null;
+  const stage = request.order ? "delivery" : ["quote_ready", "awaiting_payment", "payment_verification", "paid", "payment_confirmed"].includes(internalStatus) ? "payment" : internalStatus === "submitted" ? "request_submitted" : "pharmacy_review";
+  const stageLabels = { request_submitted: "Request submitted", pharmacy_review: "Pharmacy review", payment: "Payment", delivery: "Delivery", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill" };
+  const importantStatuses = new Set(["submitted", "quote_ready", "awaiting_payment", "paid", "payment_confirmed", "out_for_delivery", "delivery_failed", "delivered", "completed", "cancelled", "unable_to_fulfill", "awaiting_information", "additional_information_required"]);
+  const statusHistory = (request.statusHistory || []).filter((event) => importantStatuses.has(event.status));
+  const paymentState = internalStatus === "awaiting_payment" ? "required" : internalStatus === "payment_verification" ? "verification" : ["paid", "payment_confirmed"].includes(internalStatus) ? "confirmed" : request.quote?.status === "sent" ? "quote_available" : undefined;
+  delete request.internalNotes;
+  request.status = terminalStatus || stage;
+  request.statusLabel = stageLabels[request.status];
+  request.trackerStage = stage;
+  request.paymentState = paymentState;
+  request.completed = ["completed", "delivered"].includes(internalStatus);
+  request.statusHistory = statusHistory;
+  request.latestUpdate = statusHistory.at(-1)?.note || (stage === "pharmacy_review" ? "The pharmacy is reviewing this request." : stageLabels[stage]);
+  return request;
 }
 
 async function getRequestRow(id, ownerId) {
   const rows = ownerId
-    ? await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id} AND r.owner_user_id=${ownerId}`
-    : await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id}`;
+    ? await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id} AND r.owner_user_id=${ownerId}`
+    : await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id}`;
   return rows[0];
 }
 
@@ -372,6 +416,27 @@ function orderFromRow(row) {
   };
 }
 
+function customerOrderFromRow(row) {
+  const order = row.order_number ? orderFromRow(row) : { ...row };
+  const deliveryState = order.status === "delivery_failed" ? "delivery_failed" : ["completed", "delivered"].includes(order.status) ? "completed" : order.status === "out_for_delivery" ? "out_for_delivery" : "payment_confirmed";
+  const labels = { payment_confirmed: "Payment confirmed", out_for_delivery: "Out for delivery", completed: "Completed", delivery_failed: "Delivery failed" };
+  const important = new Set(["payment_confirmed", "out_for_delivery", "delivery_failed", "delivered", "completed"]);
+  const seen = new Set();
+  const timeline = (order.statusHistory || []).filter((event) => important.has(event.status)).map((event) => {
+    const status = event.status === "delivered" ? "completed" : event.status;
+    return { id: event.id, status, customerLabel: labels[status], note: event.note, createdAt: event.createdAt || event.timestamp };
+  }).filter((event) => !seen.has(event.status) && seen.add(event.status));
+  order.status = deliveryState;
+  order.statusLabel = labels[deliveryState];
+  order.deliveryStatusLabel = labels[deliveryState];
+  order.timeline = timeline;
+  order.statusHistory = timeline;
+  order.customerStatusNote = timeline.at(-1)?.note;
+  delete order.internalTimeline;
+  delete order.deliveryAssignment;
+  return order;
+}
+
 function staffOrderFromRow(row, user) {
   const order = orderFromRow(row);
   const clinical = hasRole(user, ["admin", "pharmacist"]);
@@ -443,6 +508,25 @@ export default async function handler(req, res) {
     const user = await requireUser(req, res, isAdminPath ? ["admin", "pharmacist", "customer_support", "fulfillment", "delivery_operations"] : undefined);
     if (!user) return;
 
+    if (path[0] === "profile" && path.length === 1) {
+      if (req.method === "GET") return send(res, 200, { user });
+      if (req.method === "PUT") {
+        const body = await readJson(req);
+        const firstName = String(body.firstName || "").trim();
+        const lastName = String(body.lastName || "").trim();
+        const phone = String(body.phone || "").trim();
+        const countryProfile = normalizedCountryProfile(body.countryCode || body.country);
+        if (!firstName || !lastName || !phone || !countryProfile) return fail(res, 400, "Enter your name and phone, then choose a valid country.");
+        const profile = { ...(user.profile || {}), firstName, lastName, phone, ...countryProfile };
+        if (body.legalAccepted === true && !profile.legalAcceptedAt) Object.assign(profile, { legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
+        const fullName = `${firstName} ${lastName}`.trim();
+        await sql`UPDATE app_profiles SET full_name=${fullName}, profile=${JSON.stringify(profile)}::jsonb, updated_at=now() WHERE user_id=${user.id}`;
+        await audit(user.id, "profile.updated", "app_profile", user.id, { countryCode: countryProfile.countryCode, currency: countryProfile.currency });
+        return send(res, 200, { user: { ...user, name: fullName, profile } });
+      }
+      return fail(res, 405, "Method not allowed.");
+    }
+
     if (path[0] === "beneficiaries") {
       if (req.method === "GET" && path.length === 1) {
         const includeArchived = url.searchParams.get("includeArchived") === "true";
@@ -484,13 +568,13 @@ export default async function handler(req, res) {
 
     if (path[0] === "medication-requests") {
       if (req.method === "GET" && path.length === 1) {
-        const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.owner_user_id=${user.id} ORDER BY r.created_at DESC`;
+        const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.owner_user_id=${user.id} ORDER BY r.created_at DESC`;
         let requests = rows.map(requestFromRow);
         const status = url.searchParams.get("status");
         const search = String(url.searchParams.get("search") || "").toLowerCase();
-        if (status && status !== "all") requests = requests.filter((item) => status === "active" ? !["delivered", "cancelled", "unable_to_fulfill"].includes(item.status) : status === "needs_action" ? item.actionRequired : status === "completed" ? item.status === "delivered" : item.status === status);
+        if (status && status !== "all") requests = requests.filter((item) => status === "active" ? !["delivered", "completed", "cancelled", "unable_to_fulfill"].includes(item.status) : status === "needs_action" ? item.actionRequired : status === "completed" ? ["delivered", "completed"].includes(item.status) : item.status === status);
         if (search) requests = requests.filter((item) => JSON.stringify(item).toLowerCase().includes(search));
-        return send(res, 200, { requests });
+        return send(res, 200, { requests: requests.map((request) => customerRequestFromRow(request)) });
       }
       if (req.method === "POST" && path.length === 1) {
         const data = await readJson(req);
@@ -513,14 +597,15 @@ export default async function handler(req, res) {
         await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${data.beneficiaryId}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
         if (fileReferences.length) await sql`UPDATE protected_files SET target_id=${id} WHERE owner_user_id=${user.id} AND kind='request' AND id = ANY(${fileReferences})`;
         await audit(user.id, "request.created", "medication_request", id, { ownerId: user.id });
+        await notify(user.id, "Request submitted", "Hakim Plus received your medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request");
         const row = await getRequestRow(id, user.id);
-        return send(res, 201, { request: requestFromRow(row) });
+        return send(res, 201, { request: customerRequestFromRow(row) });
       }
       const requestId = path[1];
       if (req.method === "GET" && path.length === 2) {
         const row = await getRequestRow(requestId, user.id);
         if (!row) return fail(res, 404, "Medication request not found.");
-        return send(res, 200, { request: requestFromRow(row) });
+        return send(res, 200, { request: customerRequestFromRow(row) });
       }
       if (path[2] === "message-attachments" && req.method === "POST" && path.length === 3) {
         const row = await getRequestRow(requestId, user.id);
@@ -609,8 +694,10 @@ export default async function handler(req, res) {
         if (!rows[0].data?.expiresAt || new Date(rows[0].data.expiresAt).getTime() <= Date.now()) return fail(res, 409, "This quote has expired. Ask Hakim Plus for an updated quote.");
         const updated = await sql`UPDATE quotes SET status='approved', approved_at=now(), updated_at=now() WHERE id=${quoteId} AND status='sent' RETURNING id`;
         if (!updated[0]) return fail(res, 409, "Only the current sent quote can be approved.");
-        await sql`UPDATE medication_requests SET status='awaiting_payment', updated_at=now() WHERE id=${rows[0].request_id}`;
+        const paymentEvent = { id: randomUUID(), status: "awaiting_payment", customerLabel: "Payment required", note: "Your quote is approved and payment is required.", createdAt: new Date().toISOString() };
+        await sql`UPDATE medication_requests SET status='awaiting_payment', status_history=status_history || ${JSON.stringify([paymentEvent])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
         await audit(user.id, "quote.approved", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
+        await notify(user.id, "Payment required", "Your quote is approved. Complete the bank transfer and upload the receipt.", `/dashboard/requests/${rows[0].request_id}/payment`, "Pay now");
         return send(res, 200, { quote: { id: quoteId, status: "approved" }, paymentPath: `/dashboard/requests/${rows[0].request_id}/payment` });
       }
       const body = await readJson(req);
@@ -657,12 +744,12 @@ export default async function handler(req, res) {
         let orders = rows.map(orderFromRow);
         if (view === "active") orders = orders.filter((order) => !["delivered", "completed", "cancelled"].includes(order.status));
         if (["past", "history", "completed"].includes(view)) orders = orders.filter((order) => ["delivered", "completed", "cancelled"].includes(order.status));
-        return send(res, 200, { orders });
+        return send(res, 200, { orders: orders.map((order) => customerOrderFromRow(order)) });
       }
       if (req.method === "GET" && path.length === 2) {
         const row = await getOrderRow(path[1], user.id);
         if (!row) return fail(res, 404, "Order not found.");
-        return send(res, 200, { order: orderFromRow(row) });
+        return send(res, 200, { order: customerOrderFromRow(row) });
       }
       if (req.method === "GET" && path[2] === "delivery-proof") {
         const row = await getOrderRow(path[1], user.id);
@@ -685,6 +772,7 @@ export default async function handler(req, res) {
         const history = [{ id: randomUUID(), status: "submitted", customerLabel: "Request submitted", note: `Requested again from ${row.order_number}.`, createdAt: new Date().toISOString() }];
         await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${row.beneficiary_id}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
         await audit(user.id, "order.requested_again", "order", row.id, { ownerId: user.id, newRequestId: id });
+        await notify(user.id, "Request submitted", "Hakim Plus received your repeat medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request");
         return send(res, 201, { request: { id, publicId: id, requestNumber }, requestPath: `/dashboard/requests/${id}/confirmation` });
       }
     }
@@ -704,15 +792,15 @@ export default async function handler(req, res) {
           awaitingQuote: (requestCounts.checking_availability || 0) + (requestCounts.prescription_verification || 0),
           awaitingApproval: requestCounts.quote_ready || 0,
           paymentsReceived: orderCounts.payment_confirmed || 0,
-          preparingOrders: (orderCounts.preparing_order || 0) + (orderCounts.preparing || 0),
-          awaitingDelivery: orderCounts.ready_for_delivery || 0,
           outForDelivery: orderCounts.out_for_delivery || 0,
+          completedOrders: orderCounts.completed || 0,
+          deliveryFailed: orderCounts.delivery_failed || 0,
         }, totalOverdue, urgentRequests });
       }
       if (path[1] === "requests") {
         if (!requireRole(user, res, ["admin", "pharmacist", "customer_support"])) return;
         if (req.method === "GET" && path.length === 2) {
-          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id ORDER BY r.created_at DESC`;
+          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id ORDER BY r.created_at DESC`;
           let requests = rows.map((row) => staffRequestFromRow(row, user));
           const queue = url.searchParams.get("queue");
           const search = String(url.searchParams.get("search") || "").toLowerCase();
@@ -762,6 +850,8 @@ export default async function handler(req, res) {
           }
           if (req.method === "PUT" && path.length === 4) {
             const data = quoteTotals(await readJson(req));
+            const expectedCurrency = row.customer_profile?.currency || normalizedCountryProfile(row.customer_profile)?.currency || "USD";
+            data.currency = expectedCurrency;
             if (!Array.isArray(data.items) || !data.items.length) return fail(res, 400, "Add at least one quote item.");
             if (!/^[A-Z]{3}$/.test(String(data.currency || ""))) return fail(res, 400, "Use a valid three-letter currency code.");
             if (!data.expiresAt || !Number.isFinite(new Date(data.expiresAt).getTime()) || new Date(data.expiresAt).getTime() <= Date.now()) return fail(res, 400, "Set a future quote expiration date and time.");
@@ -795,7 +885,6 @@ export default async function handler(req, res) {
           const event = { id: randomUUID(), status, customerLabel: statusLabel(status), note: body.note || "Status updated by Hakim Plus.", createdAt: new Date().toISOString() };
           await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
           await audit(user.id, "request.status_updated", "medication_request", requestId, { ownerId: row.owner_user_id, status });
-          await notify(row.owner_user_id, "Request updated", event.note, `/dashboard/requests/${requestId}`, "View request");
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "internal-notes") {
@@ -901,8 +990,7 @@ export default async function handler(req, res) {
           const queue = url.searchParams.get("queue") || "active";
           const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
           if (queue === "active") orders = orders.filter((order) => !["completed", "delivered", "cancelled"].includes(order.status));
-          else if (queue === "preparing") orders = orders.filter((order) => ["preparing", "preparing_order"].includes(order.status));
-          else if (queue === "completed") orders = orders.filter((order) => ["delivered", "completed"].includes(order.status));
+          else if (queue === "completed") orders = orders.filter((order) => order.status === "completed");
           else if (queue) orders = orders.filter((order) => order.status === queue);
           if (search) orders = orders.filter((order) => JSON.stringify(order).toLowerCase().includes(search));
           return send(res, 200, { orders });
@@ -923,20 +1011,10 @@ export default async function handler(req, res) {
           return send(res, 201, { id, fileReference: id, fileName });
         }
         if (req.method === "POST" && path[3] === "status") {
-          const body = await readJson(req);
-          const status = String(body.status || "");
-          if (!["preparing_order", "ready_for_delivery", "completed"].includes(status)) return fail(res, 400, "Choose a valid order status.");
-          const transitions = { payment_confirmed: ["preparing_order"], preparing_order: ["ready_for_delivery"], delivered: ["completed"] };
-          if (!(transitions[row.status] || []).includes(status)) return fail(res, 409, `The order cannot move from ${statusLabel(row.status)} to ${statusLabel(status)}.`);
-          const now = new Date().toISOString();
-          const data = { ...(row.data || {}) };
-          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status, customerLabel: statusLabel(status), note: String(body.note || "").trim() || `Order status changed to ${statusLabel(status)}.`, createdAt: now }];
-          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: `Status changed to ${statusLabel(status)}`, createdAt: now, actor: { name: user.name } }];
-          await saveOrderState(row, status, data, user.id, "order.status_updated", "Order updated", data.statusHistory.at(-1).note);
-          return send(res, 200, { order: orderFromRow({ ...row, status, data, updated_at: now }) });
+          return fail(res, 409, "Use dispatch, delivery confirmation, or delivery failure to update fulfillment.");
         }
         if (req.method === "POST" && path[3] === "delivery-assignment") {
-          if (!["ready_for_delivery", "delivery_failed"].includes(row.status)) return fail(res, 409, "Mark the order ready for delivery before assigning it.");
+          if (!["payment_confirmed", "delivery_failed"].includes(row.status)) return fail(res, 409, "Only a paid or failed delivery can be assigned.");
           const body = await readJson(req);
           if (!String(body.deliveryPersonId || body.deliveryPersonName || "").trim()) return fail(res, 400, "Enter a delivery person ID or name.");
           const now = new Date().toISOString();
@@ -949,7 +1027,7 @@ export default async function handler(req, res) {
         if (req.method === "POST" && path[3] === "dispatch") {
           const body = await readJson(req);
           if (!row.data?.deliveryAssignment) return fail(res, 409, "Assign delivery before dispatching the order.");
-          if (!["ready_for_delivery", "delivery_failed"].includes(row.status)) return fail(res, 409, "Only a ready or failed delivery can be dispatched.");
+          if (!["payment_confirmed", "delivery_failed"].includes(row.status)) return fail(res, 409, "Only a paid or failed delivery can be dispatched.");
           const now = new Date().toISOString();
           const note = String(body.note || "").trim() || "Your order is out for delivery.";
           const data = { ...(row.data || {}), deliveryStatusLabel: "Out for delivery", dispatchedAt: now };
@@ -965,11 +1043,11 @@ export default async function handler(req, res) {
           if (!proof[0]) return fail(res, 400, "Upload valid proof of delivery first.");
           const now = new Date().toISOString();
           const note = String(body.deliveryNote || "").trim() || "Delivery confirmed.";
-          const data = { ...(row.data || {}), deliveryStatusLabel: "Delivered", deliveredAt: now, deliveryProofReference: body.proofReference, deliveryNote: note };
-          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "delivered", customerLabel: "Delivered", note, createdAt: now }];
-          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Delivery confirmed", createdAt: now, actor: { name: user.name } }];
-          await saveOrderState(row, "delivered", data, user.id, "order.delivered", "Order delivered", note);
-          await sql`UPDATE medication_requests SET status='delivered', updated_at=now() WHERE id=${row.request_id}`;
+          const data = { ...(row.data || {}), deliveryStatusLabel: "Completed", deliveredAt: now, completedAt: now, deliveryProofReference: body.proofReference, deliveryNote: note };
+          data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "completed", customerLabel: "Completed", note, createdAt: now }];
+          data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Delivery completed", createdAt: now, actor: { name: user.name } }];
+          await saveOrderState(row, "completed", data, user.id, "order.completed", "Order completed", note);
+          await sql`UPDATE medication_requests SET status='completed', updated_at=now() WHERE id=${row.request_id}`;
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "delivery-failure") {
@@ -997,9 +1075,13 @@ export default async function handler(req, res) {
         const requestsFulfilled = (await sql`SELECT count(*)::int count FROM medication_requests WHERE created_at >= ${cutoff} AND status IN ('delivered','completed')`)[0].count;
         const quoteStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE status='approved')::int approved FROM quotes WHERE created_at >= ${cutoff}`)[0];
         const repeatStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE request_count > 1)::int repeat FROM (SELECT owner_user_id, count(*) request_count FROM medication_requests WHERE created_at >= ${cutoff} GROUP BY owner_user_id) owners`)[0];
-        const orderStats = (await sql`SELECT COALESCE(avg(p.amount_minor),0)::float8 average_minor, percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (o.updated_at-o.created_at))/3600) FILTER (WHERE o.status IN ('delivered','completed')) median_hours FROM orders o JOIN payments p ON p.id=o.payment_id WHERE o.created_at >= ${cutoff}`)[0];
+        const orderStats = (await sql`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (o.updated_at-o.created_at))/3600) FILTER (WHERE o.status='completed') median_hours FROM orders o WHERE o.created_at >= ${cutoff}`)[0];
+        const averageOrderValues = await sql`SELECT p.currency, avg(p.amount_minor)::float8 average_minor, count(*)::int order_count FROM orders o JOIN payments p ON p.id=o.payment_id WHERE o.created_at >= ${cutoff} GROUP BY p.currency ORDER BY p.currency`;
+        const countryCounts = await sql`SELECT COALESCE(NULLIF(ap.profile->>'countryName',''), NULLIF(ap.profile->>'country',''), 'Not provided') label, count(*)::int value FROM medication_requests r JOIN app_profiles ap ON ap.user_id=r.owner_user_id WHERE r.created_at >= ${cutoff} GROUP BY label ORDER BY value DESC`;
         const outcomes = await sql`SELECT status, count(*)::int value FROM orders WHERE created_at >= ${cutoff} GROUP BY status ORDER BY value DESC`;
-        return send(res, 200, { metrics: { customers, beneficiaries: beneficiariesCount, requestsSubmitted, requestsFulfilled, quoteApprovalRate: quoteStats.total ? quoteStats.approved / quoteStats.total * 100 : 0, repeatCustomerRate: repeatStats.total ? repeatStats.repeat / repeatStats.total * 100 : 0, averageOrderValue: Number(orderStats.average_minor || 0) / 100, medianFulfillmentHours: Number(orderStats.median_hours || 0) }, currency: "ETB", requestsByCustomerCountry: [], fulfillmentOutcomes: outcomes.map((item) => ({ key: item.status, label: statusLabel(item.status), value: item.value, percent: outcomes.reduce((sum, entry) => sum + entry.value, 0) ? item.value / outcomes.reduce((sum, entry) => sum + entry.value, 0) * 100 : 0 })), generatedAt: new Date().toISOString() });
+        const countryTotal = countryCounts.reduce((sum, entry) => sum + entry.value, 0);
+        const outcomeTotal = outcomes.reduce((sum, entry) => sum + entry.value, 0);
+        return send(res, 200, { metrics: { customers, beneficiaries: beneficiariesCount, requestsSubmitted, requestsFulfilled, quoteApprovalRate: quoteStats.total ? quoteStats.approved / quoteStats.total * 100 : 0, repeatCustomerRate: repeatStats.total ? repeatStats.repeat / repeatStats.total * 100 : 0, medianFulfillmentHours: Number(orderStats.median_hours || 0) }, averageOrderValues: averageOrderValues.map((item) => ({ currency: item.currency, amountMinor: Math.round(Number(item.average_minor || 0)), orderCount: item.order_count })), requestsByCustomerCountry: countryCounts.map((item) => ({ key: item.label, label: item.label, value: item.value, percent: countryTotal ? item.value / countryTotal * 100 : 0 })), fulfillmentOutcomes: outcomes.map((item) => ({ key: item.status, label: statusLabel(item.status), value: item.value, percent: outcomeTotal ? item.value / outcomeTotal * 100 : 0 })), generatedAt: new Date().toISOString() });
       }
       if (path[1] === "audit-logs" && req.method === "GET") {
         if (!requireRole(user, res, ["admin"])) return;

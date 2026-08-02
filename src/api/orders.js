@@ -17,7 +17,6 @@ export const adminOrdersApi = {
     return apiRequest(`/api/v1/admin/orders?${query.toString()}`);
   },
   get: (id) => apiRequest(`/api/v1/admin/orders/${encodeId(id)}`),
-  updateStatus: (id, payload) => apiRequest(`/api/v1/admin/orders/${encodeId(id)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   assignDelivery: (id, payload) => apiRequest(`/api/v1/admin/orders/${encodeId(id)}/delivery-assignment`, { method: "POST", body: JSON.stringify(payload) }),
   dispatch: (id, payload) => apiRequest(`/api/v1/admin/orders/${encodeId(id)}/dispatch`, { method: "POST", body: JSON.stringify(payload) }),
   confirmDelivery: (id, payload) => apiRequest(`/api/v1/admin/orders/${encodeId(id)}/delivery-confirmation`, { method: "POST", body: JSON.stringify(payload) }),

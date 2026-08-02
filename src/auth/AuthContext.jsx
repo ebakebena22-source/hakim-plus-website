@@ -53,6 +53,16 @@ export function AuthProvider({ children }) {
         setUser(null);
         setStatus("anonymous");
       },
+      async refreshSession() {
+        const result = await authClient.getSession();
+        setUser(result.user || null);
+        setStatus(result.user ? "authenticated" : "anonymous");
+        return result.user || null;
+      },
+      updateUser(nextUser) {
+        setUser(nextUser);
+        setStatus(nextUser ? "authenticated" : "anonymous");
+      },
     }),
     [status, user],
   );
