@@ -37,6 +37,7 @@ test("public shell contains no third-party behavioral tracking", async () => {
   const landing = await source("src/App.jsx");
   assert.doesNotMatch(html, /facebook\.com\/tr|fbevents\.js|fbq\(/);
   assert.doesNotMatch(landing, /@vercel\/analytics|trackMetaEvent|fbq\(/);
+  assert.match(landing, /<Button href="\/signup"[^>]*>Start with this option<\/Button>/);
 });
 
 test("client analytics accepts only explicitly safe context", async () => {

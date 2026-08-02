@@ -783,7 +783,7 @@ export default function DiasporaPharmacyLandingPage() {
                   </div>
                 ))}
               </div>
-              <Button href="#contact" className="mt-8 w-full" variant={pkg.featured ? "secondary" : "primary"}>Start with this option</Button>
+              <Button href="/signup" className="mt-8 w-full" variant={pkg.featured ? "secondary" : "primary"}>Start with this option</Button>
             </AnimatedCard>
           ))}
         </motion.div>
