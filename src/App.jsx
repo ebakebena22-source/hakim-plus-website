@@ -602,11 +602,6 @@ export default function DiasporaPharmacyLandingPage() {
       </section>
 
       <section className="overflow-hidden bg-white py-6 md:py-8">
-        <div className="mx-auto max-w-7xl px-5">
-          <p className="mb-6 text-center text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Trusted by regulators and suppliers
-          </p>
-        </div>
         <div className="relative w-full overflow-hidden">
           <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-white to-transparent" />
           <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-white to-transparent" />
@@ -966,7 +961,6 @@ export default function DiasporaPharmacyLandingPage() {
           <p>© 2026 Hakim Plus Pharmacy. Diaspora Care Service.</p>
           <div className="flex flex-col items-start gap-2 md:items-end">
             <nav className="flex gap-4" aria-label="Legal"><a className="font-semibold hover:text-emerald-700" href="/terms">Terms of Use</a><a className="font-semibold hover:text-emerald-700" href="/privacy">Privacy Policy</a></nav>
-            <p>Licensed by EFDA</p>
             <p>Medicine verification · Payment request · Delivery proof</p>
           </div>
         </div>
