@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { authClient, authConfiguration } from "./authClient";
 
 const AuthContext = createContext(null);
@@ -28,43 +28,53 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  const signIn = useCallback(async (credentials) => {
+    const result = await authClient.signIn(credentials);
+    setUser(result.user);
+    setStatus("authenticated");
+    return result;
+  }, []);
+
+  const signUp = useCallback(async (details) => {
+    const result = await authClient.signUp(details);
+    if (result.user && result.requiresVerification === false) {
+      setUser(result.user);
+      setStatus("authenticated");
+    }
+    return result;
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await authClient.signOut();
+    setUser(null);
+    setStatus("anonymous");
+  }, []);
+
+  const refreshSession = useCallback(async () => {
+    const result = await authClient.getSession();
+    setUser(result.user || null);
+    setStatus(result.user ? "authenticated" : "anonymous");
+    return result.user || null;
+  }, []);
+
+  const updateUser = useCallback((nextUser) => {
+    setUser(nextUser);
+    setStatus(nextUser ? "authenticated" : "anonymous");
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
       status,
       configured: authConfiguration.configured,
       mode: authConfiguration.mode,
-      async signIn(credentials) {
-        const result = await authClient.signIn(credentials);
-        setUser(result.user);
-        setStatus("authenticated");
-        return result;
-      },
-      async signUp(details) {
-        const result = await authClient.signUp(details);
-        if (result.user && result.requiresVerification === false) {
-          setUser(result.user);
-          setStatus("authenticated");
-        }
-        return result;
-      },
-      async signOut() {
-        await authClient.signOut();
-        setUser(null);
-        setStatus("anonymous");
-      },
-      async refreshSession() {
-        const result = await authClient.getSession();
-        setUser(result.user || null);
-        setStatus(result.user ? "authenticated" : "anonymous");
-        return result.user || null;
-      },
-      updateUser(nextUser) {
-        setUser(nextUser);
-        setStatus(nextUser ? "authenticated" : "anonymous");
-      },
+      signIn,
+      signUp,
+      signOut,
+      refreshSession,
+      updateUser,
     }),
-    [status, user],
+    [refreshSession, signIn, signOut, signUp, status, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -129,7 +129,7 @@ export function SignupPage() {
 }
 
 export function SocialAuthCompletePage() {
-  const auth = useAuth();
+  const { refreshSession, updateUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const oauthError = Boolean(searchParams.get("error"));
@@ -143,17 +143,17 @@ export function SocialAuthCompletePage() {
     completionStarted.current = true;
     const completion = verifier
       ? authClient.completeSocialSignIn(verifier).then((result) => {
-          auth.updateUser(result.user);
+          updateUser(result.user);
           return result.user;
         })
-      : auth.refreshSession();
+      : refreshSession();
     completion.then((user) => {
       if (!active) return;
       if (!user) return setError("The social account was verified, but a Hakim Plus session could not be created. Try again.");
       navigate(user.profile?.countryCode ? "/dashboard" : "/onboarding", { replace: true });
     }).catch((sessionError) => { if (active) setError(sessionError.message); });
     return () => { active = false; };
-  }, [auth, navigate, oauthError, verifier]);
+  }, [navigate, oauthError, refreshSession, updateUser, verifier]);
 
   return <AuthShell eyebrow="Secure sign-in" title={error ? "Sign-in needs attention" : "Finishing your sign-in"} description="We are securely connecting your account to Hakim Plus." footer={<Link className="font-bold text-emerald-700 hover:underline" to="/login">Return to sign in</Link>}><FormError message={error} />{!error && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900" role="status">Checking your account…</p>}</AuthShell>;
 }

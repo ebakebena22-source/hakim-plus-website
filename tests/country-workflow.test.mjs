@@ -52,6 +52,7 @@ test("customer responses hide internal fulfillment and minor pharmacy events", a
 test("Google auth and dedicated legal pages are wired into registration", async () => {
   const authPage = await source("src/pages/AuthPages.jsx");
   const authClient = await source("src/auth/authClient.js");
+  const authContext = await source("src/auth/AuthContext.jsx");
   const api = await source("api/v1/[...path].js");
   const router = await source("src/router.jsx");
   const legal = await source("src/pages/LegalPages.jsx");
@@ -63,6 +64,8 @@ test("Google auth and dedicated legal pages are wired into registration", async 
   assert.match(api, /action === "social-complete"/);
   assert.match(authClient, /completeSocialSignIn/);
   assert.match(router, /neon_auth_session_verifier/);
+  assert.match(authContext, /const refreshSession = useCallback/);
+  assert.doesNotMatch(authPage, /\[auth, navigate, oauthError, verifier\]/);
   assert.match(authPage, /By creating an account, you agree to our/);
   assert.match(router, /path="\/terms"/);
   assert.match(router, /path="\/privacy"/);
