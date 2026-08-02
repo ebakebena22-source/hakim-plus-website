@@ -154,6 +154,9 @@ const packages = [
   },
 ];
 
+// Set to true to restore the partner-logo carousel on the homepage.
+const showPartnerLogos = false;
+
 const partnerLogos = [
   "https://i.postimg.cc/VLN0Sk9h/1.png",
   "https://i.postimg.cc/tTYCqsGr/Untitled-design-(73).png",
@@ -601,19 +604,21 @@ export default function DiasporaPharmacyLandingPage() {
         </div>
       </section>
 
-      <section className="overflow-hidden bg-white py-6 md:py-8">
-        <div className="relative w-full overflow-hidden">
-          <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-white to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-white to-transparent" />
-          <motion.div className="flex gap-6 whitespace-nowrap items-center" animate={{ x: [0, -1000] }} transition={{ repeat: Infinity, duration: 35, ease: "linear" }}>
-            {[...partnerLogos, ...partnerLogos].map((logo, index) => (
-              <div key={`${logo}-${index}`} className="flex min-w-[180px] items-center justify-center opacity-60 grayscale transition-all duration-300 hover:opacity-100 hover:grayscale-0 md:min-w-[320px]">
-                <img src={logo} alt="partner logo" className="h-[82px] object-contain md:h-[140px]" />
-              </div>
-            ))}
-          </motion.div>
-        </div>
-      </section>
+      {showPartnerLogos && (
+        <section className="overflow-hidden bg-white py-6 md:py-8">
+          <div className="relative w-full overflow-hidden">
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-white to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-white to-transparent" />
+            <motion.div className="flex gap-6 whitespace-nowrap items-center" animate={{ x: [0, -1000] }} transition={{ repeat: Infinity, duration: 35, ease: "linear" }}>
+              {[...partnerLogos, ...partnerLogos].map((logo, index) => (
+                <div key={`${logo}-${index}`} className="flex min-w-[180px] items-center justify-center opacity-60 grayscale transition-all duration-300 hover:opacity-100 hover:grayscale-0 md:min-w-[320px]">
+                  <img src={logo} alt="partner logo" className="h-[82px] object-contain md:h-[140px]" />
+                </div>
+              ))}
+            </motion.div>
+          </div>
+        </section>
+      )}
 
       <section id="how" className="relative overflow-hidden bg-slate-950 px-5 py-16 text-white md:py-28">
         <div className="absolute left-1/2 top-0 h-[420px] w-[420px] -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl" />
