@@ -49,12 +49,15 @@ test("customer responses hide internal fulfillment and minor pharmacy events", a
   for (const title of ["Request submitted", "Your quote is ready", "Payment required", "Payment confirmed", "Order dispatched", "Order completed", "Delivery needs attention"]) assert.ok(api.includes(`"${title}"`), `missing important notification: ${title}`);
 });
 
-test("social auth and dedicated legal pages are wired into registration", async () => {
+test("Google auth and dedicated legal pages are wired into registration", async () => {
   const authPage = await source("src/pages/AuthPages.jsx");
+  const api = await source("api/v1/[...path].js");
   const router = await source("src/router.jsx");
   const legal = await source("src/pages/LegalPages.jsx");
   assert.match(authPage, /Continue with Google/);
-  assert.match(authPage, /Continue with Apple/);
+  assert.doesNotMatch(authPage, /Continue with Apple/);
+  assert.match(authPage, /<SocialAuthButtons disabled={!auth\.configured}/);
+  assert.match(api, /provider !== "google"/);
   assert.match(authPage, /By creating an account, you agree to our/);
   assert.match(router, /path="\/terms"/);
   assert.match(router, /path="\/privacy"/);

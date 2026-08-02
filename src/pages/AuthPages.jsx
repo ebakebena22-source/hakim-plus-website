@@ -11,21 +11,21 @@ function FormError({ message }) {
 }
 
 function SocialAuthButtons({ disabled = false, onError }) {
-  const [busyProvider, setBusyProvider] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  async function continueWith(provider) {
+  async function continueWithGoogle() {
     onError?.("");
-    setBusyProvider(provider);
+    setBusy(true);
     try {
-      const result = await authClient.socialSignIn(provider);
+      const result = await authClient.socialSignIn("google");
       window.location.assign(result.url);
     } catch (error) {
       onError?.(error.message);
-      setBusyProvider("");
+      setBusy(false);
     }
   }
 
-  return <div className="space-y-3"><button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || Boolean(busyProvider)} onClick={() => continueWith("google")}><span className="text-base font-black text-blue-600" aria-hidden="true">G</span>{busyProvider === "google" ? "Connecting…" : "Continue with Google"}</button><button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || Boolean(busyProvider)} onClick={() => continueWith("apple")}><span className="text-lg leading-none" aria-hidden="true">●</span>{busyProvider === "apple" ? "Connecting…" : "Continue with Apple"}</button></div>;
+  return <button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || busy} onClick={continueWithGoogle}><span className="text-base font-black text-blue-600" aria-hidden="true">G</span>{busy ? "Connecting…" : "Continue with Google"}</button>;
 }
 
 function AuthDivider() {
@@ -102,8 +102,8 @@ export function SignupPage() {
     <AuthShell eyebrow="Create account" title="Start supporting your loved ones" description="Your beneficiary does not need an account. You stay in control of requests, quotes, payments, and updates." footer={<p>Already registered? <Link className="font-bold text-emerald-700 hover:underline" to="/login">Sign in</Link></p>}>
       {!auth.configured && <ConfigurationNotice />}
       {auth.mode === "local-preview" && <LocalPreviewNotice />}
-      <SocialAuthButtons disabled={!auth.configured || !form.termsAccepted || !form.privacyAccepted} onError={setError} />
-      <p className="mt-3 text-xs leading-5 text-slate-500">Select the agreement below before creating an account with Google or Apple.</p>
+      <SocialAuthButtons disabled={!auth.configured} onError={setError} />
+      <p className="mt-3 text-xs leading-5 text-slate-500">After Google sign-in, you will complete your profile and accept the Terms of Use and Privacy Policy.</p>
       <AuthDivider />
       <form className="space-y-5" onSubmit={handleSubmit}>
         <FormError message={error} />

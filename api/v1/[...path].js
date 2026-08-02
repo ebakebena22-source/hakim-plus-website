@@ -126,12 +126,12 @@ async function handleAuth(req, res, action) {
   if (action === "social" && method === "POST") {
     const form = await readJson(req);
     const provider = String(form.provider || "").toLowerCase();
-    if (!["google", "apple"].includes(provider)) return fail(res, 400, "Choose Google or Apple sign-in.");
+    if (provider !== "google") return fail(res, 400, "Google is the only supported social sign-in provider.");
     const callbackURL = "https://hakimpluspharmacy.com/auth/social-complete";
     const upstream = await callAuth(req, "/sign-in/social", { method: "POST", body: { provider, callbackURL, errorCallbackURL: `${callbackURL}?error=oauth` } });
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
-    if (!upstream.ok) return fail(res, upstream.status, payload.message || `${provider === "google" ? "Google" : "Apple"} sign-in is not available yet.`);
+    if (!upstream.ok) return fail(res, upstream.status, payload.message || "Google sign-in is temporarily unavailable.");
     const redirectUrl = payload.url || upstream.headers.get("location");
     if (!redirectUrl) return fail(res, 502, "The account service did not return a social sign-in URL.");
     return send(res, 200, { url: redirectUrl, provider });
