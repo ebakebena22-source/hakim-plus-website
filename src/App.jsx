@@ -156,6 +156,8 @@ const packages = [
 
 // Set to true to restore the partner-logo carousel on the homepage.
 const showPartnerLogos = false;
+// Set to true to restore the fulfilled-orders statistic in the hero.
+const showFulfilledOrdersStat = false;
 
 const partnerLogos = [
   "https://i.postimg.cc/VLN0Sk9h/1.png",
@@ -538,11 +540,13 @@ export default function DiasporaPharmacyLandingPage() {
               </Button>
             </div>
             <div className="mt-7 border-t border-slate-200 pt-5">
-              <div className="grid grid-cols-3 gap-3 md:gap-4">
-                <div className="flex flex-col items-start">
-                  <p className="text-2xl font-extrabold leading-none text-emerald-600 md:text-3xl">16K+</p>
-                  <p className="text-xs font-semibold text-slate-600 leading-none">fulfilled orders</p>
-                </div>
+              <div className={`grid gap-3 md:gap-4 ${showFulfilledOrdersStat ? "grid-cols-3" : "grid-cols-2"}`}>
+                {showFulfilledOrdersStat && (
+                  <div className="flex flex-col items-start">
+                    <p className="text-2xl font-extrabold leading-none text-emerald-600 md:text-3xl">16K+</p>
+                    <p className="text-xs font-semibold text-slate-600 leading-none">fulfilled orders</p>
+                  </div>
+                )}
                 <div>
                   <p className="text-xl font-bold md:text-2xl">Same-day</p>
                   <p className="text-xs text-slate-500">delivery available</p>
