@@ -51,6 +51,7 @@ test("customer responses hide internal fulfillment and minor pharmacy events", a
 
 test("Google auth and dedicated legal pages are wired into registration", async () => {
   const authPage = await source("src/pages/AuthPages.jsx");
+  const authClient = await source("src/auth/authClient.js");
   const api = await source("api/v1/[...path].js");
   const router = await source("src/router.jsx");
   const legal = await source("src/pages/LegalPages.jsx");
@@ -58,6 +59,10 @@ test("Google auth and dedicated legal pages are wired into registration", async 
   assert.doesNotMatch(authPage, /Continue with Apple/);
   assert.match(authPage, /<SocialAuthButtons disabled={!auth\.configured}/);
   assert.match(api, /provider !== "google"/);
+  assert.match(api, /headers\["x-neon-auth-middleware"\] = "true"/);
+  assert.match(api, /action === "social-complete"/);
+  assert.match(authClient, /completeSocialSignIn/);
+  assert.match(router, /neon_auth_session_verifier/);
   assert.match(authPage, /By creating an account, you agree to our/);
   assert.match(router, /path="\/terms"/);
   assert.match(router, /path="\/privacy"/);

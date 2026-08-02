@@ -54,6 +54,18 @@ function authBaseUrl() {
   return String(process.env.DATABASE_NEON_AUTH_BASE_URL || process.env.NEON_AUTH_BASE_URL || "").replace(/\/$/, "");
 }
 
+function requestOrigin(req) {
+  if (req.headers.origin) return req.headers.origin;
+  if (req.headers.referer) {
+    try {
+      return new URL(req.headers.referer).origin;
+    } catch {
+      return "";
+    }
+  }
+  return "https://hakimpluspharmacy.com";
+}
+
 async function callAuth(req, endpoint, options = {}) {
   const baseUrl = authBaseUrl();
   if (!baseUrl) throw Object.assign(new Error("Authentication is not configured."), { status: 503 });
@@ -62,14 +74,16 @@ async function callAuth(req, endpoint, options = {}) {
     "https://www.hakimpluspharmacy.com",
     ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
   ]);
-  if (req.headers.origin && !allowedOrigins.has(req.headers.origin)) {
+  const origin = requestOrigin(req);
+  if (!allowedOrigins.has(origin)) {
     throw Object.assign(new Error("This request origin is not allowed."), { status: 403 });
   }
   const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) };
   if (req.headers.cookie) headers.Cookie = req.headers.cookie;
-  // Neon Auth validates the server-to-server hop against its own trusted
-  // origin. The customer-facing origin is validated above and never forwarded.
-  headers.Origin = new URL(baseUrl).origin;
+  if (req.headers.referer) headers.Referer = req.headers.referer;
+  if (req.headers["user-agent"]) headers["User-Agent"] = req.headers["user-agent"];
+  headers.Origin = origin;
+  headers["x-neon-auth-middleware"] = "true";
   return fetch(`${baseUrl}${endpoint}`, { method: options.method || "GET", headers, body: options.body ? JSON.stringify(options.body) : undefined, redirect: "manual" });
 }
 
@@ -135,6 +149,16 @@ async function handleAuth(req, res, action) {
     const redirectUrl = payload.url || upstream.headers.get("location");
     if (!redirectUrl) return fail(res, 502, "The account service did not return a social sign-in URL.");
     return send(res, 200, { url: redirectUrl, provider });
+  }
+  if (action === "social-complete" && method === "GET") {
+    const verifier = new URL(req.url, "https://hakimpluspharmacy.com").searchParams.get("verifier") || "";
+    if (!/^[A-Za-z0-9_-]{8,2048}$/.test(verifier)) return fail(res, 400, "The Google sign-in verifier is missing or invalid.");
+    const upstream = await callAuth(req, `/get-session?neon_auth_session_verifier=${encodeURIComponent(verifier)}`);
+    copyAuthCookies(upstream, res);
+    const payload = authPayload(await upstream.json().catch(() => ({})));
+    if (!upstream.ok || !payload.user?.id) return fail(res, 401, payload.message || "Google sign-in could not create a Hakim Plus session. Please try again.");
+    await upsertProfile(payload.user);
+    return send(res, 200, { user: await publicUser(payload.user) });
   }
   if (action === "session" && method === "GET") {
     const session = await getAuthSession(req);

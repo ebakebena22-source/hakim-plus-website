@@ -102,6 +102,7 @@ const apiAuthClient = {
   signIn: (credentials) => apiRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify(credentials) }),
   signUp: (details) => apiRequest("/api/v1/auth/register", { method: "POST", body: JSON.stringify(details) }),
   socialSignIn: (provider) => apiRequest("/api/v1/auth/social", { method: "POST", body: JSON.stringify({ provider }) }),
+  completeSocialSignIn: (verifier) => apiRequest(`/api/v1/auth/social-complete?verifier=${encodeURIComponent(verifier)}`),
   signOut: () => apiRequest("/api/v1/auth/logout", { method: "POST" }),
   requestPasswordReset: (email) => apiRequest("/api/v1/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
   resetPassword: (payload) => apiRequest("/api/v1/auth/reset-password", { method: "POST", body: JSON.stringify(payload) }),

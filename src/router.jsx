@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useSearchParams } from "react-router-dom";
 import LandingPage from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 import ProtectedRoute from "./auth/ProtectedRoute";
@@ -38,12 +38,17 @@ function RouteLoading() {
   return <main className="grid min-h-screen place-items-center bg-slate-50 px-5" role="status"><p className="text-sm font-semibold text-slate-600">Loading secure workspace…</p></main>;
 }
 
+function LandingOrSocialComplete() {
+  const [searchParams] = useSearchParams();
+  return searchParams.has("neon_auth_session_verifier") ? <SocialAuthCompletePage /> : <LandingPage />;
+}
+
 export default function SiteRouter() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Suspense fallback={<RouteLoading />}><Routes>
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={<LandingOrSocialComplete />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />

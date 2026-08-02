@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { authClient } from "../auth/authClient";
@@ -133,18 +133,27 @@ export function SocialAuthCompletePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const oauthError = Boolean(searchParams.get("error"));
+  const verifier = searchParams.get("neon_auth_session_verifier");
+  const completionStarted = useRef(false);
   const [error, setError] = useState(oauthError ? "Social sign-in could not be completed. Try again or use email and password." : "");
 
   useEffect(() => {
     let active = true;
-    if (oauthError) return () => { active = false; };
-    auth.refreshSession().then((user) => {
+    if (oauthError || completionStarted.current) return () => { active = false; };
+    completionStarted.current = true;
+    const completion = verifier
+      ? authClient.completeSocialSignIn(verifier).then((result) => {
+          auth.updateUser(result.user);
+          return result.user;
+        })
+      : auth.refreshSession();
+    completion.then((user) => {
       if (!active) return;
       if (!user) return setError("The social account was verified, but a Hakim Plus session could not be created. Try again.");
       navigate(user.profile?.countryCode ? "/dashboard" : "/onboarding", { replace: true });
     }).catch((sessionError) => { if (active) setError(sessionError.message); });
     return () => { active = false; };
-  }, [auth, navigate, oauthError]);
+  }, [auth, navigate, oauthError, verifier]);
 
   return <AuthShell eyebrow="Secure sign-in" title={error ? "Sign-in needs attention" : "Finishing your sign-in"} description="We are securely connecting your account to Hakim Plus." footer={<Link className="font-bold text-emerald-700 hover:underline" to="/login">Return to sign in</Link>}><FormError message={error} />{!error && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900" role="status">Checking your account…</p>}</AuthShell>;
 }
