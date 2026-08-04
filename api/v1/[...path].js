@@ -347,20 +347,25 @@ function requestFromRow(row) {
 function customerRequestFromRow(row) {
   const request = row.request_number ? requestFromRow(row) : { ...row };
   const internalStatus = request.status;
+  const completed = ["completed", "delivered"].includes(internalStatus);
+  const completionMessage = "Your request is complete and the order has been delivered.";
   const terminalStatus = ["cancelled", "unable_to_fulfill"].includes(internalStatus) ? internalStatus : null;
-  const stage = request.order ? "delivery" : ["quote_ready", "awaiting_payment", "payment_verification", "paid", "payment_confirmed"].includes(internalStatus) ? "payment" : internalStatus === "submitted" ? "request_submitted" : "pharmacy_review";
+  const stage = request.order || completed ? "delivery" : ["quote_ready", "awaiting_payment", "payment_verification", "paid", "payment_confirmed"].includes(internalStatus) ? "payment" : internalStatus === "submitted" ? "request_submitted" : "pharmacy_review";
   const stageLabels = { request_submitted: "Request submitted", pharmacy_review: "Pharmacy review", payment: "Payment", delivery: "Delivery", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill" };
   const importantStatuses = new Set(["submitted", "quote_ready", "awaiting_payment", "paid", "payment_confirmed", "out_for_delivery", "delivery_failed", "delivered", "completed", "cancelled", "unable_to_fulfill", "awaiting_information", "additional_information_required"]);
-  const statusHistory = (request.statusHistory || []).filter((event) => importantStatuses.has(event.status));
-  const paymentState = internalStatus === "awaiting_payment" ? "required" : internalStatus === "payment_verification" ? "verification" : ["paid", "payment_confirmed"].includes(internalStatus) ? "confirmed" : request.quote?.status === "sent" ? "quote_available" : undefined;
+  let statusHistory = (request.statusHistory || []).filter((event) => importantStatuses.has(event.status));
+  if (completed && !statusHistory.some((event) => ["completed", "delivered"].includes(event.status))) {
+    statusHistory = [...statusHistory, { id: `completed-${request.id}`, status: "completed", customerLabel: "Completed", note: completionMessage, createdAt: request.updatedAt || request.createdAt }];
+  }
+  const paymentState = completed ? "confirmed" : internalStatus === "awaiting_payment" ? "required" : internalStatus === "payment_verification" ? "verification" : ["paid", "payment_confirmed"].includes(internalStatus) ? "confirmed" : request.quote?.status === "sent" ? "quote_available" : undefined;
   delete request.internalNotes;
   request.status = terminalStatus || stage;
-  request.statusLabel = stageLabels[request.status];
+  request.statusLabel = completed ? "Completed" : stageLabels[request.status];
   request.trackerStage = stage;
   request.paymentState = paymentState;
-  request.completed = ["completed", "delivered"].includes(internalStatus);
+  request.completed = completed;
   request.statusHistory = statusHistory;
-  request.latestUpdate = statusHistory.at(-1)?.note || (stage === "pharmacy_review" ? "The pharmacy is reviewing this request." : stageLabels[stage]);
+  request.latestUpdate = completed ? completionMessage : statusHistory.at(-1)?.note || (stage === "pharmacy_review" ? "The pharmacy is reviewing this request." : stageLabels[stage]);
   return request;
 }
 
@@ -1289,7 +1294,8 @@ export default async function handler(req, res) {
           data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "completed", customerLabel: "Completed", note, createdAt: now }];
           data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Delivery completed", createdAt: now, actor: { name: user.name } }];
           await saveOrderState(row, "completed", data, user.id, "order.completed", "Order completed", note);
-          await sql`UPDATE medication_requests SET status='completed', updated_at=now() WHERE id=${row.request_id}`;
+          const requestEvent = { id: randomUUID(), status: "completed", customerLabel: "Completed", note: "Your request is complete and the order has been delivered.", createdAt: now };
+          await sql`UPDATE medication_requests SET status='completed', status_history=status_history || ${JSON.stringify([requestEvent])}::jsonb, updated_at=now() WHERE id=${row.request_id}`;
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "delivery-failure") {

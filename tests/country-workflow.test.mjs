@@ -29,6 +29,7 @@ test("country and currency are authoritative backend profile fields", async () =
 
 test("customer tracking has four stages while fulfillment exposes only delivery outcomes", async () => {
   const tracker = await source("src/components/CustomerOrderTracker.jsx");
+  const customerRequests = await source("src/pages/RequestPages.jsx");
   const adminOrders = await source("src/pages/AdminOrderPages.jsx");
   const api = await source("api/v1/[...path].js");
   for (const label of ["Request Submitted", "Pharmacy Review", "Payment", "Delivery"]) assert.ok(tracker.includes(label));
@@ -39,6 +40,15 @@ test("customer tracking has four stages while fulfillment exposes only delivery 
   assert.match(adminOrders, /Delivery Failed/);
   assert.match(api, /Use dispatch, delivery confirmation, or delivery failure/);
   assert.match(api, /saveOrderState\(row, "completed"/);
+  assert.match(api, /const completed = \["completed", "delivered"\]\.includes\(internalStatus\)/);
+  assert.match(api, /request\.statusLabel = completed \? "Completed"/);
+  assert.match(api, /request\.latestUpdate = completed \? completionMessage/);
+  assert.match(api, /Your request is complete and the order has been delivered\./);
+  assert.match(api, /status='completed', status_history=status_history \|\|/);
+  assert.match(customerRequests, /request\.completed && <section/);
+  assert.match(customerRequests, /Order delivered/);
+  assert.match(customerRequests, /View completed order/);
+  assert.match(customerRequests, /!request\.completed && <section/);
 });
 
 test("customer responses hide internal fulfillment and minor pharmacy events", async () => {
