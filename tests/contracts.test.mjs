@@ -222,7 +222,7 @@ test("medication requests use five simplified queues and exclude completed deliv
   assert.match(page, /searchParams\.get\("queue"\) \|\| "new"/);
   assert.doesNotMatch(page, /\["all","All"\]|\["awaiting_review","Awaiting review"\]|\["needs_information","Needs information"\]/);
   assert.match(api, /new: \["submitted", "under_review", "under_pharmacy_review"\]/);
-  assert.match(api, /queue === "beneficiary_contacted"[^\n]+note\.kind === "beneficiary_contact"/);
+  assert.match(api, /queue === "beneficiary_contacted"[^\n]+!item\.quote[^\n]+note\.kind === "beneficiary_contact"/);
   assert.match(api, /queue === "quote_generated"[^\n]+Boolean\(item\.quote\)/);
   assert.match(api, /WHERE o\.id IS NULL OR o\.status NOT IN \('completed','delivered'\)/);
   assert.doesNotMatch(page, /Request information|informationForm|requestInformation/);
@@ -235,6 +235,9 @@ test("generated quotes replace pre-quote actions and support safe customer-notif
   const quotePage = await source("src/pages/AdminQuotePage.jsx");
   const quoteClient = await source("src/api/quotes.js");
   const summary = await source("src/components/AdminQuoteSummary.jsx");
+  const transfers = await source("src/pages/AdminTransfersPage.jsx");
+  const paymentsClient = await source("src/api/payments.js");
+  const router = await source("src/router.jsx");
 
   assert.match(requestPage, /const hasGeneratedQuote = Boolean\(request\.quote \|\| state\.quote\)/);
   assert.match(requestPage, /!hasGeneratedQuote && <section[^\n]+Update pharmacy status/);
@@ -246,6 +249,12 @@ test("generated quotes replace pre-quote actions and support safe customer-notif
   assert.match(summary, /Quote total/);
   assert.match(summary, />Edit quote</);
   assert.match(summary, /"Delete quote"/);
+  assert.match(summary, /Review bank transfer/);
+  assert.match(summary, /\/admin\/bank-transfers\//);
+  assert.match(transfers, /export function AdminTransferDetailPage/);
+  assert.match(transfers, /Approve payment/);
+  assert.match(paymentsClient, /get: \(id\).*admin\/bank-transfers/);
+  assert.match(router, /path="bank-transfers\/:id"/);
 
   assert.match(quoteClient, /method: "DELETE"/);
   assert.match(quotePage, /Save changes and notify customer/);
@@ -264,16 +273,21 @@ test("generated quotes replace pre-quote actions and support safe customer-notif
   assert.match(api, /Important change to your Hakim Plus quote/);
   assert.match(api, /This quote is locked because payment activity or fulfillment has started/);
   assert.match(api, /has_transfer[^\n]+has_payment[^\n]+has_order/);
+  assert.match(api, /SELECT id, transfer_number, status, created_at FROM bank_transfers WHERE quote_id/);
 });
 
 test("Google social sign-in cannot reuse the previous Hakim Plus session", async () => {
   const api = await source("api/v1/[...path].js");
+  const authContext = await source("src/auth/AuthContext.jsx");
   const socialStart = api.slice(api.indexOf('if (action === "social"'), api.indexOf('if (action === "social-complete"'));
   const socialComplete = api.slice(api.indexOf('if (action === "social-complete"'), api.indexOf('if (action === "session"'));
   assert.match(socialStart, /callAuth\(req, "\/sign-out", \{ method: "POST" \}\)/);
   assert.ok(socialStart.indexOf('"/sign-out"') < socialStart.indexOf('"/sign-in/social"'));
-  assert.match(socialComplete, /\{ forwardCookies: false \}/);
+  assert.match(socialStart, /"\/sign-in\/social"[^\n]+forwardCookies: false/);
+  assert.doesNotMatch(socialComplete, /forwardCookies: false/);
+  assert.match(socialComplete, /get-session\?neon_auth_session_verifier/);
   assert.match(api, /res\.setHeader\("Set-Cookie", \[\.\.\.current, \.\.\.cookies\.map\(normalizeCookie\)\]\)/);
+  assert.match(authContext, /has\("neon_auth_session_verifier"\)/);
 });
 
 test("payment confirmation and dispatch use one combined customer email", async () => {
@@ -283,11 +297,11 @@ test("payment confirmation and dispatch use one combined customer email", async 
   const approval = api.slice(api.indexOf('path[3] === "approve"'), api.indexOf('path[3] === "reject"'));
   const dispatch = api.slice(api.indexOf('path[3] === "dispatch"'), api.indexOf('path[3] === "delivery-confirmation"'));
   assert.match(approval, /sendEmail: false/);
-  assert.match(dispatch, /subject: "Payment received and order dispatched"/);
+  assert.match(dispatch, /subject: "Payment confirmed and order dispatched"/);
   assert.match(dispatch, /label: "Payment number"/);
   assert.match(dispatch, /label: "Order number"/);
-  assert.match(transfers, /combined payment-received\/order-dispatched email will be sent when the order is dispatched/);
-  assert.match(orders, /send the combined payment-received\/order-dispatched email/);
+  assert.match(transfers, /combined payment-confirmed\/order-dispatched email will be sent when the order is dispatched/);
+  assert.match(orders, /send the combined payment-confirmed\/order-dispatched email/);
 });
 
 test("security overview excludes ordinary fulfillment failures", async () => {
@@ -339,5 +353,5 @@ test("admin actions confirm before triggering customer email", async () => {
   assert.match(quotePage, /window\.confirm\("Send this quote and an email to the customer\?/);
   assert.match(transferPage, /creates the fulfillment order/);
   assert.match(transferPage, /Reject this transfer and email the reason to the customer/);
-  for (const prompt of ["mark this order completed, and email the customer", "send the combined payment-received/order-dispatched email", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
+  for (const prompt of ["mark this order completed, and email the customer", "send the combined payment-confirmed/order-dispatched email", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
 });

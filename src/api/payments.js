@@ -17,6 +17,7 @@ export const paymentsApi = {
 
 export const adminTransfersApi = {
   list: (status = "pending") => apiRequest(`/api/v1/admin/bank-transfers?status=${encodeURIComponent(status)}`),
+  get: (id) => apiRequest(`/api/v1/admin/bank-transfers/${encodeId(id)}`),
   approve: (id, note = "") => apiRequest(`/api/v1/admin/bank-transfers/${encodeId(id)}/approve`, { method: "POST", body: JSON.stringify({ note }) }),
   reject: (id, reason) => apiRequest(`/api/v1/admin/bank-transfers/${encodeId(id)}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
   receiptUrl: (id) => `/api/v1/admin/bank-transfers/${encodeId(id)}/receipt`,

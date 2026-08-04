@@ -50,6 +50,14 @@ export default function AdminQuoteSummary({ quote, requestId, locked, busy, onDe
     </div>
     {quote.pharmacyNotes && <div className="mt-5 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-950"><strong className="block">Pharmacy note</strong><p className="mt-2 whitespace-pre-wrap">{quote.pharmacyNotes}</p></div>}
 
+    {quote.bankTransfer && <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-amber-800">Bank transfer receipt</p>
+      <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="font-bold text-amber-950">{quote.bankTransfer.transferNumber}</p><p className="mt-1 text-sm capitalize text-amber-900">{quote.bankTransfer.statusLabel || statusLabel(quote.bankTransfer.status)}</p></div>
+        <Link className="inline-flex min-h-11 items-center justify-center rounded-xl bg-amber-900 px-4 text-sm font-bold text-white" to={`/admin/bank-transfers/${encodeURIComponent(quote.bankTransfer.id)}`}>{quote.bankTransfer.status === "pending" ? "Review bank transfer" : "View bank transfer"}</Link>
+      </div>
+    </div>}
+
     {locked ? <p className="mt-6 rounded-xl bg-amber-50 p-4 text-sm font-semibold text-amber-900">This quote is locked because payment or fulfillment has started.</p> : <div className="mt-6 flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row">
       <Link className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-emerald-700 px-4 text-sm font-bold text-white" to={`/admin/requests/${encodeURIComponent(requestId)}/quote`}>Edit quote</Link>
       <button className="min-h-11 flex-1 rounded-xl border border-red-300 px-4 text-sm font-bold text-red-700" type="button" disabled={busy} onClick={onDelete}>{busy ? "Deleting…" : "Delete quote"}</button>

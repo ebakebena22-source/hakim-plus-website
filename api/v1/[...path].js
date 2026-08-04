@@ -158,7 +158,7 @@ async function handleAuth(req, res, action) {
     const callbackURL = "https://hakimpluspharmacy.com/auth/social-complete";
     const signOutUpstream = await callAuth(req, "/sign-out", { method: "POST" });
     copyAuthCookies(signOutUpstream, res);
-    const upstream = await callAuth(req, "/sign-in/social", { method: "POST", body: { provider, callbackURL, errorCallbackURL: `${callbackURL}?error=oauth` } });
+    const upstream = await callAuth(req, "/sign-in/social", { method: "POST", body: { provider, callbackURL, errorCallbackURL: `${callbackURL}?error=oauth` }, forwardCookies: false });
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "Google sign-in is temporarily unavailable.");
@@ -169,7 +169,7 @@ async function handleAuth(req, res, action) {
   if (action === "social-complete" && method === "GET") {
     const verifier = new URL(req.url, "https://hakimpluspharmacy.com").searchParams.get("verifier") || "";
     if (!/^[A-Za-z0-9_-]{8,2048}$/.test(verifier)) return fail(res, 400, "The Google sign-in verifier is missing or invalid.");
-    const upstream = await callAuth(req, `/get-session?neon_auth_session_verifier=${encodeURIComponent(verifier)}`, { forwardCookies: false });
+    const upstream = await callAuth(req, `/get-session?neon_auth_session_verifier=${encodeURIComponent(verifier)}`);
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok || !payload.user?.id) return fail(res, 401, payload.message || "Google sign-in could not create a Hakim Plus session. Please try again.");
@@ -982,7 +982,7 @@ export default async function handler(req, res) {
             new: ["submitted", "under_review", "under_pharmacy_review"],
           };
           if (queueStatuses[queue]) requests = requests.filter((item) => queueStatuses[queue].includes(item.status));
-          if (queue === "beneficiary_contacted") requests = requests.filter((item) => item.internalNotes?.some((note) => note.kind === "beneficiary_contact"));
+          if (queue === "beneficiary_contacted") requests = requests.filter((item) => !item.quote && item.internalNotes?.some((note) => note.kind === "beneficiary_contact"));
           if (queue === "quote_generated") requests = requests.filter((item) => Boolean(item.quote));
           if (queue === "urgent") requests = requests.filter((item) => item.urgent);
           if (queue === "overdue") requests = requests.filter((item) => item.overdue);
@@ -1017,9 +1017,11 @@ export default async function handler(req, res) {
           if (!requireRole(user, res, ["admin", "pharmacist"])) return;
           if (req.method === "GET" && path.length === 4) {
             const rows = await sql`SELECT * FROM quotes WHERE request_id=${requestId}`;
-            const downstream = rows[0] ? await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE quote_id=${rows[0].id}) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order` : [];
-            const locked = Boolean(downstream[0]?.has_transfer || downstream[0]?.has_payment || downstream[0]?.has_order);
-            return send(res, 200, { quote: rows[0] ? { ...quoteTotals(rows[0].data), id: rows[0].id, quoteNumber: rows[0].quote_number, status: rows[0].status, expiresAt: rows[0].data.expiresAt, createdAt: rows[0].created_at, updatedAt: rows[0].updated_at, sentAt: rows[0].sent_at, approvedAt: rows[0].approved_at, locked } : null });
+            const transfers = rows[0] ? await sql`SELECT id, transfer_number, status, created_at FROM bank_transfers WHERE quote_id=${rows[0].id} ORDER BY created_at DESC LIMIT 1` : [];
+            const downstream = rows[0] ? await sql`SELECT EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order` : [];
+            const locked = Boolean(transfers[0] || downstream[0]?.has_payment || downstream[0]?.has_order);
+            const bankTransfer = transfers[0] ? { id: transfers[0].id, transferNumber: transfers[0].transfer_number, status: transfers[0].status, statusLabel: statusLabel(transfers[0].status), createdAt: transfers[0].created_at } : null;
+            return send(res, 200, { quote: rows[0] ? { ...quoteTotals(rows[0].data), id: rows[0].id, quoteNumber: rows[0].quote_number, status: rows[0].status, expiresAt: rows[0].data.expiresAt, createdAt: rows[0].created_at, updatedAt: rows[0].updated_at, sentAt: rows[0].sent_at, approvedAt: rows[0].approved_at, locked, bankTransfer } : null });
           }
           if (req.method === "PUT" && path.length === 4) {
             const data = quoteTotals(await readJson(req));
@@ -1157,8 +1159,12 @@ export default async function handler(req, res) {
           return send(res, 200, { transfers: filtered.map((row) => ({ id: row.id, transferNumber: row.transfer_number, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, transferReference: row.transfer_reference, transferDate: row.transfer_date, requestNumber: row.request_number, beneficiaryName: row.beneficiary_data.fullName, customerName: row.customer_name, customerEmail: row.customer_email, createdAt: row.created_at, rejectionReason: row.rejection_reason })) });
         }
         const transferId = path[2];
-        const rows = await sql`SELECT t.*, q.data quote_data, q.quote_number, r.request_number, b.data beneficiary_data FROM bank_transfers t JOIN quotes q ON q.id=t.quote_id JOIN medication_requests r ON r.id=t.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id WHERE t.id=${transferId}`;
+        const rows = await sql`SELECT t.*, q.data quote_data, q.quote_number, r.request_number, b.data beneficiary_data, p.email customer_email, p.full_name customer_name FROM bank_transfers t JOIN quotes q ON q.id=t.quote_id JOIN medication_requests r ON r.id=t.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=t.owner_user_id WHERE t.id=${transferId}`;
         if (!rows[0]) return fail(res, 404, "Transfer not found.");
+        if (req.method === "GET" && path.length === 3) {
+          const transfer = rows[0];
+          return send(res, 200, { transfer: { id: transfer.id, transferNumber: transfer.transfer_number, status: transfer.status, statusLabel: statusLabel(transfer.status), amountMinor: transfer.amount_minor, currency: transfer.currency, transferReference: transfer.transfer_reference, transferDate: transfer.transfer_date, requestId: transfer.request_id, requestNumber: transfer.request_number, quoteNumber: transfer.quote_number, beneficiaryName: transfer.beneficiary_data?.fullName, customerName: transfer.customer_name, customerEmail: transfer.customer_email, createdAt: transfer.created_at, reviewedAt: transfer.reviewed_at, reviewNote: transfer.review_note, rejectionReason: transfer.rejection_reason } });
+        }
         if (req.method === "GET" && path[3] === "receipt") {
           await audit(user.id, "bank_transfer.receipt_viewed", "bank_transfer", transferId);
           return streamPrivateBlob(res, rows[0].blob_url, rows[0].content_type, rows[0].file_name);
@@ -1259,7 +1265,7 @@ export default async function handler(req, res) {
           data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "out_for_delivery", customerLabel: "Out for delivery", note, createdAt: now }];
           data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Order dispatched", createdAt: now, actor: { name: user.name } }];
           await saveOrderState(row, "out_for_delivery", data, user.id, "order.dispatched", "Order dispatched", "Payment received and your order is out for delivery.", {
-            subject: "Payment received and order dispatched",
+            subject: "Payment confirmed and order dispatched",
             fields: [
               { label: "Payment number", value: row.payment_number },
               { label: "Order number", value: row.order_number },

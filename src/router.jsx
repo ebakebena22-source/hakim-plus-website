@@ -33,6 +33,7 @@ const AdminAnalyticsPage = lazy(() => import("./pages/AdminAnalyticsPage"));
 const AuditLogPage = lazy(() => import("./pages/AdminGovernancePages").then((module) => ({ default: module.AuditLogPage })));
 const SecurityOverviewPage = lazy(() => import("./pages/AdminGovernancePages").then((module) => ({ default: module.SecurityOverviewPage })));
 const AdminTransfersPage = lazy(() => import("./pages/AdminTransfersPage"));
+const AdminTransferDetailPage = lazy(() => import("./pages/AdminTransfersPage").then((module) => ({ default: module.AdminTransferDetailPage })));
 
 function RouteLoading() {
   return <main className="grid min-h-screen place-items-center bg-slate-50 px-5" role="status"><p className="text-sm font-semibold text-slate-600">Loading secure workspace…</p></main>;
@@ -91,6 +92,7 @@ export default function SiteRouter() {
             <Route path="completed-orders" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrdersPage completedOnly /></StaffRoute>} />
             <Route path="completed-orders/:id" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrderDetailPage completedView /></StaffRoute>} />
             <Route path="bank-transfers" element={<StaffRoute allowedRoles={["admin", "pharmacist"]}><AdminTransfersPage /></StaffRoute>} />
+            <Route path="bank-transfers/:id" element={<StaffRoute allowedRoles={["admin", "pharmacist"]}><AdminTransferDetailPage /></StaffRoute>} />
             <Route path="analytics" element={<StaffRoute allowedRoles={["admin"]}><AdminAnalyticsPage /></StaffRoute>} />
             <Route path="audit-logs" element={<StaffRoute allowedRoles={["admin"]}><AuditLogPage /></StaffRoute>} />
             <Route path="security" element={<StaffRoute allowedRoles={["admin"]}><SecurityOverviewPage /></StaffRoute>} />
