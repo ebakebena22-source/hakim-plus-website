@@ -18,6 +18,8 @@ const BANK = {
   accountNumber: process.env.BANK_ACCOUNT_NUMBER || "1000746304483",
   swift: process.env.BANK_SWIFT || "CBETETAA",
 };
+const APP_URL = String(process.env.APP_URL || "https://hakimpluspharmacy.com").replace(/\/$/, "");
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_FROM || "Hakim Plus <notifications@hakimpluspharmacy.com>";
 
 function send(res, status, payload, headers = {}) {
   res.statusCode = status;
@@ -113,7 +115,10 @@ async function handleAuth(req, res, action) {
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "The account could not be created.");
     let user = payload.user || payload;
-    if (user?.id) await upsertProfile(user, { firstName: String(form.firstName).trim(), lastName: String(form.lastName).trim(), phone: String(form.phone || "").trim(), ...countryProfile, legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
+    if (user?.id) {
+      const profileCreated = await upsertProfile(user, { firstName: String(form.firstName).trim(), lastName: String(form.lastName).trim(), phone: String(form.phone || "").trim(), ...countryProfile, legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
+      if (profileCreated) await sendWelcomeEmail(user.id);
+    }
 
     // Neon Auth can be configured to allow password sign-up without email
     // verification. Its sign-up response does not always include a session in
@@ -162,7 +167,8 @@ async function handleAuth(req, res, action) {
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok || !payload.user?.id) return fail(res, 401, payload.message || "Google sign-in could not create a Hakim Plus session. Please try again.");
-    await upsertProfile(payload.user);
+    const profileCreated = await upsertProfile(payload.user);
+    if (profileCreated) await sendWelcomeEmail(payload.user.id);
     return send(res, 200, { user: await publicUser(payload.user) });
   }
   if (action === "session" && method === "GET") {
@@ -223,6 +229,7 @@ async function upsertProfile(authUser, profile = {}) {
   await sql`INSERT INTO app_profiles (user_id, email, full_name, profile, roles)
     VALUES (${authUser.id}, ${email}, ${authUser.name || `${profile.firstName || ""} ${profile.lastName || ""}`.trim()}, ${JSON.stringify(mergedProfile)}::jsonb, ${roles})
     ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), app_profiles.full_name), profile = app_profiles.profile || EXCLUDED.profile, roles = EXCLUDED.roles, updated_at = now()`;
+  return !existing[0];
 }
 
 async function publicUser(authUser) {
@@ -285,6 +292,11 @@ async function ensureSchema() {
     await sql`CREATE TABLE IF NOT EXISTS communication_preferences (
       user_id text PRIMARY KEY REFERENCES app_profiles(user_id), data jsonb NOT NULL DEFAULT '{}'::jsonb,
       updated_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`CREATE TABLE IF NOT EXISTS email_deliveries (
+      id text PRIMARY KEY, owner_user_id text NOT NULL REFERENCES app_profiles(user_id), event_key text NOT NULL UNIQUE,
+      recipient text NOT NULL, subject text NOT NULL, provider_id text, status text NOT NULL,
+      error_message text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`CREATE INDEX IF NOT EXISTS email_deliveries_owner_idx ON email_deliveries(owner_user_id, created_at DESC)`;
   })().catch((error) => { schemaPromise = undefined; throw error; });
   return schemaPromise;
 }
@@ -400,8 +412,52 @@ function requireRole(user, res, allowedRoles) {
 }
 
 async function notify(ownerUserId, title, message, actionPath, actionLabel) {
+  const id = randomUUID();
   await sql`INSERT INTO notifications (id, owner_user_id, title, message, action_path, action_label)
-    VALUES (${randomUUID()}, ${ownerUserId}, ${title}, ${message}, ${actionPath || null}, ${actionLabel || null})`;
+    VALUES (${id}, ${ownerUserId}, ${title}, ${message}, ${actionPath || null}, ${actionLabel || null})`;
+  await sendCustomerEmail(ownerUserId, `notification:${id}`, title, message, actionPath, actionLabel);
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character]);
+}
+
+function emailDocument(title, message, actionPath, actionLabel, customerName) {
+  const firstName = String(customerName || "").trim().split(/\s+/)[0];
+  const greeting = firstName ? `Hello ${escapeHtml(firstName)},` : "Hello,";
+  const actionUrl = actionPath ? `${APP_URL}${actionPath.startsWith("/") ? actionPath : `/${actionPath}`}` : "";
+  const action = actionUrl ? `<p style="margin:28px 0"><a href="${escapeHtml(actionUrl)}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:13px 20px;border-radius:10px;font-weight:700">${escapeHtml(actionLabel || "View update")}</a></p>` : "";
+  return `<!doctype html><html><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a"><div style="display:none;max-height:0;overflow:hidden">${escapeHtml(message)}</div><div style="max-width:600px;margin:0 auto;padding:32px 18px"><div style="background:#064e3b;color:#fff;padding:18px 24px;border-radius:16px 16px 0 0;font-size:20px;font-weight:800">Hakim Plus</div><div style="background:#fff;padding:28px 24px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 16px 16px"><p style="margin:0 0 20px">${greeting}</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 14px">${escapeHtml(title)}</h1><p style="font-size:16px;line-height:1.65;color:#475569;margin:0">${escapeHtml(message)}</p>${action}<p style="font-size:13px;line-height:1.5;color:#64748b;margin:28px 0 0">This is an automated service message from Hakim Plus. Do not send prescriptions or sensitive medical details by replying to this email.</p></div></div></body></html>`;
+}
+
+async function sendCustomerEmail(ownerUserId, eventKey, subject, message, actionPath, actionLabel) {
+  if (!process.env.RESEND_API_KEY) return;
+  try {
+    const rows = await sql`SELECT p.email, p.full_name, COALESCE(cp.data, '{}'::jsonb) preferences
+      FROM app_profiles p LEFT JOIN communication_preferences cp ON cp.user_id=p.user_id WHERE p.user_id=${ownerUserId}`;
+    const recipient = rows[0]?.email;
+    if (!recipient || rows[0].preferences?.emailEnabled === false) return;
+    const existing = await sql`SELECT id FROM email_deliveries WHERE event_key=${eventKey} AND status='sent'`;
+    if (existing[0]) return;
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json", "Idempotency-Key": eventKey },
+      body: JSON.stringify({ from: RESEND_FROM, to: [recipient], subject, html: emailDocument(subject, message, actionPath, actionLabel, rows[0].full_name) }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    const deliveryStatus = response.ok ? "sent" : "failed";
+    const errorMessage = response.ok ? null : String(payload.message || `Resend returned ${response.status}`).slice(0, 500);
+    await sql`INSERT INTO email_deliveries (id, owner_user_id, event_key, recipient, subject, provider_id, status, error_message)
+      VALUES (${randomUUID()}, ${ownerUserId}, ${eventKey}, ${recipient}, ${subject}, ${payload.id || null}, ${deliveryStatus}, ${errorMessage})
+      ON CONFLICT (event_key) DO UPDATE SET provider_id=EXCLUDED.provider_id, status=EXCLUDED.status, error_message=EXCLUDED.error_message, updated_at=now()`;
+    if (!response.ok) console.error("Resend delivery failed", { eventKey, status: response.status, message: errorMessage });
+  } catch (error) {
+    console.error("Customer email delivery failed", { eventKey, message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function sendWelcomeEmail(ownerUserId) {
+  await sendCustomerEmail(ownerUserId, `welcome:${ownerUserId}`, "Welcome to Hakim Plus", "Your account is ready. Add a beneficiary, then submit a medication request for pharmacy review.", "/dashboard/beneficiaries/new", "Add a beneficiary");
 }
 
 function notificationFromRow(row) {
@@ -530,7 +586,7 @@ export default async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     const routedPath = url.searchParams.get("path");
     const path = (routedPath || url.pathname.replace(/^\/api\/v1\/?/, "")).split("/").filter(Boolean).map(decodeURIComponent);
-    if (path[0] === "health") return send(res, 200, { ok: true, database: Boolean(connectionString), auth: Boolean(authBaseUrl()), privateStorage: Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) });
+    if (path[0] === "health") return send(res, 200, { ok: true, database: Boolean(connectionString), auth: Boolean(authBaseUrl()), privateStorage: Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID), transactionalEmail: Boolean(process.env.RESEND_API_KEY) });
     if (path[0] === "auth") return handleAuth(req, res, path[1]);
     await ensureSchema();
     const isAdminPath = path[0] === "admin";
