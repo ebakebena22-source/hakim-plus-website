@@ -28,6 +28,30 @@ const statusLabels = {
   unable_to_fulfill: "Unable to fulfill",
 };
 
+const requestEmptyStates = {
+  all: {
+    title: "No medication requests yet",
+    description: "When you submit a medication request, it will appear here.",
+    actionLabel: "Create your first request",
+  },
+  active: {
+    title: "No active requests",
+    description: "Your requests still in pharmacy review, payment, or delivery will appear here.",
+  },
+  needs_action: {
+    title: "Nothing needs your attention",
+    description: "Requests that need you to review a quote, make a payment, or provide information will appear here.",
+  },
+  completed: {
+    title: "No completed requests",
+    description: "Your medication requests will appear here after delivery is completed.",
+  },
+  cancelled: {
+    title: "No cancelled requests",
+    description: "Cancelled requests and requests Hakim Plus could not fulfill will appear here.",
+  },
+};
+
 function labelStatus(status, fallback) {
   return statusLabels[status] || fallback || String(status || "Submitted").replaceAll("_", " ");
 }
@@ -48,9 +72,11 @@ function ErrorMessage({ message, onRetry }) {
 export function RequestsPage() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [state, setState] = useState({ status: "loading", requests: [], error: "" });
 
   async function load(selectedFilter = filter, selectedSearch = search) {
+    setAppliedSearch(selectedSearch.trim());
     setState((current) => ({ ...current, status: "loading", error: "" }));
     try {
       const result = await requestsApi.list({ status: selectedFilter, search: selectedSearch });
@@ -69,9 +95,16 @@ export function RequestsPage() {
   function applyFilter(value) { setFilter(value); load(value, search); }
   function handleSearch(event) { event.preventDefault(); load(filter, search); }
 
+  const emptyState = appliedSearch
+    ? {
+        title: "No matching requests",
+        description: "No requests match your search. Try another request number, beneficiary, or medication.",
+      }
+    : requestEmptyStates[filter] || requestEmptyStates.all;
+
   return <main className={pagePadding}><div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-emerald-700">Care requests</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Medication requests</h1><p className="mt-3 text-sm text-slate-600">Track each request through pharmacy review, payment, and delivery.</p></div><Link className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white" to="/dashboard/requests/new">New medication request</Link></div>
     <div className="mt-8 rounded-[2rem] border border-slate-200 bg-white p-4"><div className="flex flex-wrap gap-2">{[["all","All"],["active","Active"],["needs_action","Needs action"],["completed","Completed"],["cancelled","Cancelled"]].map(([value,label]) => <button key={value} className={`rounded-full px-4 py-2 text-sm font-bold ${filter === value ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`} type="button" onClick={() => applyFilter(value)}>{label}</button>)}</div><form className="mt-4 flex gap-2" onSubmit={handleSearch}><label className="sr-only" htmlFor="request-search">Search requests</label><input id="request-search" className="min-w-0 flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm" placeholder="Search request number, beneficiary, or medication" value={search} onChange={(event) => setSearch(event.target.value)} /><button className="rounded-xl bg-slate-950 px-5 text-sm font-bold text-white" type="submit">Search</button></form></div>
-    {state.status === "loading" && <Loading />}{state.status === "error" && <ErrorMessage message={state.error} onRetry={() => load()} />}{state.status === "ready" && state.requests.length === 0 && <section className="mt-8 rounded-[2rem] border border-dashed border-slate-300 bg-white p-10 text-center"><h2 className="text-xl font-bold">You haven&apos;t submitted a medication request yet</h2><p className="mt-2 text-sm text-slate-600">Start with a beneficiary, then tell Hakim Plus what they need.</p><Link className="mt-6 inline-flex min-h-11 items-center rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white" to="/dashboard/requests/new">Create your first request</Link></section>}{state.status === "ready" && state.requests.length > 0 && <section className="mt-8 space-y-4">{state.requests.map((request) => { const id = request.publicId || request.id; return <article key={id} className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{request.requestNumber || id}</p><h2 className="mt-2 text-lg font-bold">{request.beneficiary?.fullName || request.beneficiaryName}</h2><p className="mt-1 text-sm text-slate-500">Submitted {formatDate(request.submittedAt || request.createdAt)} · {request.medicationCount || 0} medication(s)</p></div><div className="sm:text-right"><span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">{labelStatus(request.status, request.statusLabel)}</span>{request.actionRequired && <p className="mt-2 text-xs font-bold text-amber-700">Action required</p>}</div></div><div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4"><p className="text-sm text-slate-600">{request.latestUpdate || "Hakim Plus will post updates here."}</p><Link className="ml-4 shrink-0 text-sm font-bold text-emerald-700" to={`/dashboard/requests/${encodeURIComponent(id)}`}>View details</Link></div></article>; })}</section>}
+    {state.status === "loading" && <Loading />}{state.status === "error" && <ErrorMessage message={state.error} onRetry={() => load()} />}{state.status === "ready" && state.requests.length === 0 && <section className="mt-8 rounded-[2rem] border border-dashed border-slate-300 bg-white p-10 text-center"><h2 className="text-xl font-bold">{emptyState.title}</h2><p className="mt-2 text-sm text-slate-600">{emptyState.description}</p>{emptyState.actionLabel && <Link className="mt-6 inline-flex min-h-11 items-center rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white" to="/dashboard/requests/new">{emptyState.actionLabel}</Link>}</section>}{state.status === "ready" && state.requests.length > 0 && <section className="mt-8 space-y-4">{state.requests.map((request) => { const id = request.publicId || request.id; return <article key={id} className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{request.requestNumber || id}</p><h2 className="mt-2 text-lg font-bold">{request.beneficiary?.fullName || request.beneficiaryName}</h2><p className="mt-1 text-sm text-slate-500">Submitted {formatDate(request.submittedAt || request.createdAt)} · {request.medicationCount || 0} medication(s)</p></div><div className="sm:text-right"><span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">{labelStatus(request.status, request.statusLabel)}</span>{request.actionRequired && <p className="mt-2 text-xs font-bold text-amber-700">Action required</p>}</div></div><div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4"><p className="text-sm text-slate-600">{request.latestUpdate || "Hakim Plus will post updates here."}</p><Link className="ml-4 shrink-0 text-sm font-bold text-emerald-700" to={`/dashboard/requests/${encodeURIComponent(id)}`}>View details</Link></div></article>; })}</section>}
   </main>;
 }
 

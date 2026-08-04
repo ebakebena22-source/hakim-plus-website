@@ -355,3 +355,20 @@ test("admin actions confirm before triggering customer email", async () => {
   assert.match(transferPage, /Reject this transfer and email the reason to the customer/);
   for (const prompt of ["mark this order completed, and email the customer", "send the combined payment-confirmed/order-dispatched email", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
 });
+
+test("customer request filters use accurate empty-state guidance", async () => {
+  const requestPage = await source("src/pages/RequestPages.jsx");
+  for (const copy of [
+    "No medication requests yet",
+    "No active requests",
+    "Nothing needs your attention",
+    "No completed requests",
+    "No cancelled requests",
+    "No matching requests",
+    "review a quote, make a payment, or provide information",
+    "Cancelled requests and requests Hakim Plus could not fulfill",
+  ]) assert.ok(requestPage.includes(copy), `missing request empty-state copy: ${copy}`);
+  assert.match(requestPage, /const emptyState = appliedSearch/);
+  assert.match(requestPage, /emptyState\.actionLabel && <Link/);
+  assert.doesNotMatch(requestPage, /You haven&apos;t submitted a medication request yet/);
+});
