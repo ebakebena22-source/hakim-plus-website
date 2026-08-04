@@ -40,6 +40,12 @@ test("public shell contains no third-party behavioral tracking", async () => {
   assert.match(landing, /<Button href="\/signup"[^>]*>Start with this option<\/Button>/);
 });
 
+test("Vercel Web Analytics is mounted once at the application root", async () => {
+  const main = await source("src/main.jsx");
+  assert.match(main, /import \{ Analytics \} from ['"]@vercel\/analytics\/react['"]/);
+  assert.equal((main.match(/<Analytics\s*\/>/g) || []).length, 1);
+});
+
 test("client analytics accepts only explicitly safe context", async () => {
   const analytics = await source("src/analytics/safeEvents.js");
   assert.match(analytics, /allowedEvents/);
