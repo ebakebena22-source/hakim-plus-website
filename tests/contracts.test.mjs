@@ -172,7 +172,7 @@ test("customer past orders and role-aware staff UI use the corrected flows", asy
   const requestPage = await source("src/pages/AdminRequestPages.jsx");
   const quotePage = await source("src/pages/AdminQuotePage.jsx");
   assert.match(api, /\["past", "history", "completed"\]\.includes\(view\)/);
-  assert.match(requestPage, /canQuote && <section/);
+  assert.match(requestPage, /canQuote && state\.quote && <AdminQuoteSummary/);
   assert.match(quotePage, /defaultQuoteExpiry/);
 });
 
@@ -227,6 +227,43 @@ test("medication requests use five simplified queues and exclude completed deliv
   assert.match(api, /WHERE o\.id IS NULL OR o\.status NOT IN \('completed','delivered'\)/);
   assert.doesNotMatch(page, /Request information|informationForm|requestInformation/);
   assert.doesNotMatch(adminClient, /requestInformation/);
+});
+
+test("generated quotes replace pre-quote actions and support safe customer-notified revisions", async () => {
+  const api = await source("api/v1/[...path].js");
+  const requestPage = await source("src/pages/AdminRequestPages.jsx");
+  const quotePage = await source("src/pages/AdminQuotePage.jsx");
+  const quoteClient = await source("src/api/quotes.js");
+  const summary = await source("src/components/AdminQuoteSummary.jsx");
+
+  assert.match(requestPage, /const hasGeneratedQuote = Boolean\(request\.quote \|\| state\.quote\)/);
+  assert.match(requestPage, /!hasGeneratedQuote && <section[^\n]+Update pharmacy status/);
+  assert.match(requestPage, /!hasGeneratedQuote && <section[^\n]+Beneficiary contact/);
+  assert.doesNotMatch(requestPage, /Request information/);
+  assert.match(requestPage, /<AdminQuoteSummary/);
+  assert.match(summary, /Quote items|Pharmacy quote/);
+  assert.match(summary, /Items subtotal/);
+  assert.match(summary, /Quote total/);
+  assert.match(summary, />Edit quote</);
+  assert.match(summary, /"Delete quote"/);
+
+  assert.match(quoteClient, /method: "DELETE"/);
+  assert.match(quotePage, /Save changes and notify customer/);
+  assert.match(quotePage, /previously sent quote has changed/);
+  assert.match(requestPage, /previously sent quote has changed/);
+
+  for (const guard of [
+    "Pharmacy status actions are closed after a quote is generated.",
+    "Information requests are closed after a quote is generated.",
+    "Beneficiary contact actions are closed after a quote is generated.",
+  ]) assert.ok(api.includes(guard), `missing post-quote guard: ${guard}`);
+  assert.match(api, /quote\.updated/);
+  assert.match(api, /quote\.deleted/);
+  assert.match(api, /approved_at=null/);
+  assert.match(api, /Your Hakim Plus quote has changed/);
+  assert.match(api, /Important change to your Hakim Plus quote/);
+  assert.match(api, /This quote is locked because payment activity or fulfillment has started/);
+  assert.match(api, /has_transfer[^\n]+has_payment[^\n]+has_order/);
 });
 
 test("Google social sign-in cannot reuse the previous Hakim Plus session", async () => {

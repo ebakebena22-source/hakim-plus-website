@@ -15,4 +15,5 @@ export const adminQuotesApi = {
   getForRequest: (requestId) => apiRequest(`/api/v1/admin/requests/${encodeId(requestId)}/quote`),
   saveDraft: (requestId, quote) => apiRequest(`/api/v1/admin/requests/${encodeId(requestId)}/quote`, { method: "PUT", body: JSON.stringify(quote) }),
   send: (requestId) => apiRequest(`/api/v1/admin/requests/${encodeId(requestId)}/quote/send`, { method: "POST" }),
+  remove: (requestId) => apiRequest(`/api/v1/admin/requests/${encodeId(requestId)}/quote`, { method: "DELETE" }),
 };

@@ -1017,7 +1017,9 @@ export default async function handler(req, res) {
           if (!requireRole(user, res, ["admin", "pharmacist"])) return;
           if (req.method === "GET" && path.length === 4) {
             const rows = await sql`SELECT * FROM quotes WHERE request_id=${requestId}`;
-            return send(res, 200, { quote: rows[0] ? { ...quoteTotals(rows[0].data), id: rows[0].id, quoteNumber: rows[0].quote_number, status: rows[0].status, expiresAt: rows[0].data.expiresAt } : null });
+            const downstream = rows[0] ? await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE quote_id=${rows[0].id}) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order` : [];
+            const locked = Boolean(downstream[0]?.has_transfer || downstream[0]?.has_payment || downstream[0]?.has_order);
+            return send(res, 200, { quote: rows[0] ? { ...quoteTotals(rows[0].data), id: rows[0].id, quoteNumber: rows[0].quote_number, status: rows[0].status, expiresAt: rows[0].data.expiresAt, createdAt: rows[0].created_at, updatedAt: rows[0].updated_at, sentAt: rows[0].sent_at, approvedAt: rows[0].approved_at, locked } : null });
           }
           if (req.method === "PUT" && path.length === 4) {
             const data = quoteTotals(await readJson(req));
@@ -1027,13 +1029,35 @@ export default async function handler(req, res) {
             if (!/^[A-Z]{3}$/.test(String(data.currency || ""))) return fail(res, 400, "Use a valid three-letter currency code.");
             if (!data.expiresAt || !Number.isFinite(new Date(data.expiresAt).getTime()) || new Date(data.expiresAt).getTime() <= Date.now()) return fail(res, 400, "Set a future quote expiration date and time.");
             if (data.items.some((item) => !String(item.medicationName || "").trim() || !["available", "partial", "unavailable"].includes(item.availability) || (item.availability !== "unavailable" && (!(Number(item.quotedQuantity) > 0) || !Number.isInteger(Number(item.quotedQuantity)) || Number(item.unitPrice) < 0)) || (item.availability !== "available" && !String(item.pharmacyNote || "").trim()))) return fail(res, 400, "Complete every quote item, quantity, price, availability, and required note.");
-            const existing = await sql`SELECT id, status, data FROM quotes WHERE request_id=${requestId}`;
+            const existing = await sql`SELECT id, status, data, quote_number, sent_at FROM quotes WHERE request_id=${requestId}`;
             const id = existing[0]?.id || randomUUID();
-            if (existing[0] && !["draft", "change_requested"].includes(existing[0].status) && !(existing[0].status === "sent" && new Date(existing[0].data?.expiresAt).getTime() <= Date.now())) return fail(res, 409, "This quote can no longer be edited.");
-            if (existing[0]) await sql`UPDATE quotes SET data=${JSON.stringify(data)}::jsonb, status='draft', updated_at=now() WHERE id=${id}`;
-            else await sql`INSERT INTO quotes (id, request_id, quote_number, data) VALUES (${id}, ${requestId}, ${numberCode('Q')}, ${JSON.stringify(data)}::jsonb)`;
+            if (existing[0]) {
+              if (existing[0].status === "declined") return fail(res, 409, "A declined quote cannot be edited.");
+              const downstream = await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE quote_id=${id}) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order`;
+              if (downstream[0]?.has_transfer || downstream[0]?.has_payment || downstream[0]?.has_order) return fail(res, 409, "This quote is locked because payment activity or fulfillment has started.");
+              await sql`UPDATE quotes SET data=${JSON.stringify(data)}::jsonb, status='sent', sent_at=COALESCE(sent_at, now()), approved_at=null, updated_at=now() WHERE id=${id}`;
+              const event = { id: randomUUID(), status: "quote_ready", customerLabel: "Quote updated", note: "The pharmacy updated your quote. Please review the latest version.", createdAt: new Date().toISOString() };
+              await sql`UPDATE medication_requests SET status='quote_ready', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+              await audit(user.id, "quote.updated", "quote", id, { ownerId: row.owner_user_id, requestId });
+              const updatedQuote = { ...data, id, quoteNumber: existing[0].quote_number, status: "sent" };
+              await notify(row.owner_user_id, "Your quote has changed", "Hakim Plus updated the pharmacy quote sent previously. Please review the latest items, prices, fees, and total before continuing.", `/dashboard/requests/${requestId}/quote`, "Review updated quote", { ...quoteEmailDetails(updatedQuote, row.beneficiary_data?.fullName), subject: "Your Hakim Plus quote has changed" });
+            } else {
+              await sql`INSERT INTO quotes (id, request_id, quote_number, data) VALUES (${id}, ${requestId}, ${numberCode('Q')}, ${JSON.stringify(data)}::jsonb)`;
+            }
             const saved = await sql`SELECT * FROM quotes WHERE id=${id}`;
-            return send(res, 200, { quote: { ...saved[0].data, id, quoteNumber: saved[0].quote_number, status: saved[0].status } });
+            return send(res, 200, { quote: { ...saved[0].data, id, quoteNumber: saved[0].quote_number, status: saved[0].status, createdAt: saved[0].created_at, updatedAt: saved[0].updated_at, sentAt: saved[0].sent_at, approvedAt: saved[0].approved_at, locked: false } });
+          }
+          if (req.method === "DELETE" && path.length === 4) {
+            const quotes = await sql`SELECT id, status, quote_number, sent_at FROM quotes WHERE request_id=${requestId}`;
+            if (!quotes[0]) return fail(res, 404, "Quote not found.");
+            const downstream = await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE quote_id=${quotes[0].id}) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order`;
+            if (downstream[0]?.has_transfer || downstream[0]?.has_payment || downstream[0]?.has_order) return fail(res, 409, "This quote cannot be deleted because payment activity or fulfillment has started.");
+            await sql`DELETE FROM quotes WHERE id=${quotes[0].id}`;
+            const event = { id: randomUUID(), status: "under_review", customerLabel: "Pharmacy review", note: "The previous quote was withdrawn and the pharmacy is reviewing the request again.", createdAt: new Date().toISOString() };
+            await sql`UPDATE medication_requests SET status='under_review', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+            await audit(user.id, "quote.deleted", "quote", quotes[0].id, { ownerId: row.owner_user_id, requestId, previousStatus: quotes[0].status });
+            await notify(row.owner_user_id, "Your previous quote was withdrawn", "Hakim Plus removed the pharmacy quote sent previously because it requires a change. Do not use the previous quote; the pharmacy will review the request again.", `/dashboard/requests/${requestId}`, "View request", { subject: "Important change to your Hakim Plus quote", fields: [{ label: "Beneficiary", value: row.beneficiary_data?.fullName }, { label: "Current stage", value: "Pharmacy review" }] });
+            return send(res, 200, { ok: true });
           }
           if (req.method === "POST" && path[4] === "send") {
             const quotes = await sql`SELECT id, status, data, quote_number FROM quotes WHERE request_id=${requestId}`;
@@ -1050,6 +1074,7 @@ export default async function handler(req, res) {
           }
         }
         if (req.method === "POST" && path[3] === "status") {
+          if (row.quote_id) return fail(res, 409, "Pharmacy status actions are closed after a quote is generated.");
           const body = await readJson(req);
           const status = String(body.status || body.nextStatus || "under_pharmacy_review");
           const allowedStatuses = ["under_review", "under_pharmacy_review", "additional_information_required", "contacting_beneficiary", "prescription_verification", "checking_availability"];
@@ -1083,6 +1108,7 @@ export default async function handler(req, res) {
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && ["cancel", "unable-to-fulfill", "request-information"].includes(path[3])) {
+          if (path[3] === "request-information" && row.quote_id) return fail(res, 409, "Information requests are closed after a quote is generated.");
           const status = path[3] === "cancel" ? "cancelled" : path[3] === "unable-to-fulfill" ? "unable_to_fulfill" : "awaiting_information";
           const body = await readJson(req);
           const text = String(path[3] === "request-information" ? body.message : body.reason || "").trim();
@@ -1103,6 +1129,7 @@ export default async function handler(req, res) {
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "beneficiary-contact") {
+          if (row.quote_id) return fail(res, 409, "Beneficiary contact actions are closed after a quote is generated.");
           const body = await readJson(req);
           const outcome = String(body.outcome || "").trim();
           const note = String(body.note || "").trim();
