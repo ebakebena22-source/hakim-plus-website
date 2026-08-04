@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { countryOptions, normalizedCountryProfile } from "../src/profile/countries.js";
+import { emailError, isPlausibleEmail, isPlausiblePhone, phoneError } from "../src/validation/contact.js";
 
 async function source(path) {
   return readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -80,4 +81,34 @@ test("analytics never combines monetary values across currencies", async () => {
   assert.match(api, /averageOrderValues/);
   assert.match(analytics, /Average order value by currency/);
   assert.match(analytics, /must not be combined without an exchange-rate ledger/);
+});
+
+test("contact validation rejects obvious email and phone mistakes", () => {
+  assert.equal(isPlausibleEmail("customer@example.com"), true);
+  assert.equal(isPlausibleEmail("customer@example"), false);
+  assert.equal(isPlausibleEmail("customer@@example.com"), false);
+  assert.equal(isPlausiblePhone("+251 911 234 567"), true);
+  assert.equal(isPlausiblePhone("+1 (202) 555-0123"), true);
+  assert.equal(isPlausiblePhone("phone-number"), false);
+  assert.equal(isPlausiblePhone("1111111111"), false);
+  assert.match(emailError("bad"), /valid email address/);
+  assert.match(phoneError("123"), /7 to 15 digits/);
+});
+
+test("mobile account navigation and analytics drill-downs expose requested detail", async () => {
+  const portal = await source("src/layouts/PortalLayout.jsx");
+  const api = await source("api/v1/[...path].js");
+  const analytics = await source("src/pages/AdminAnalyticsPage.jsx");
+  const governance = await source("src/api/governance.js");
+  assert.match(portal, /overflow-x-auto/);
+  assert.match(portal, /navigation\.map/);
+  assert.match(portal, />Log out<\/button>/);
+  assert.match(api, /path\[2\] === "customers"/);
+  assert.match(api, /path\[2\] === "beneficiaries"/);
+  assert.match(api, /new_customers/);
+  assert.match(governance, /analytics\/customers/);
+  assert.match(governance, /analytics\/beneficiaries/);
+  assert.match(analytics, /Customer directory/);
+  assert.match(analytics, /Beneficiary directory/);
+  assert.match(analytics, /New users/);
 });

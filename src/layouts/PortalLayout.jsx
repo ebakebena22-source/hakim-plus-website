@@ -13,8 +13,6 @@ const navigation = [
   { to: "/dashboard/help", label: "Help" },
 ];
 
-const mobileNavigation = navigation.filter((item) => ["Dashboard", "Requests", "Orders", "Beneficiaries", "Payments"].includes(item.label));
-
 function navigationClass({ isActive }) {
   return `flex min-h-11 items-center rounded-xl px-4 text-sm font-semibold transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`;
 }
@@ -47,8 +45,9 @@ export default function PortalLayout() {
         </aside>
         <div id="main-content" className="min-w-0 flex-1 pb-24 lg:pb-0" tabIndex="-1"><Outlet /></div>
       </div>
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white p-2 shadow-2xl lg:hidden" aria-label="Mobile portal navigation">
-        {mobileNavigation.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `grid min-h-14 place-items-center rounded-xl text-xs font-bold ${isActive ? "bg-emerald-50 text-emerald-800" : "text-slate-500"}`}>{item.label}</NavLink>)}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex snap-x snap-mandatory overflow-x-auto border-t border-slate-200 bg-white p-2 shadow-2xl lg:hidden" aria-label="Mobile portal navigation">
+        {navigation.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `grid min-h-14 min-w-[6.75rem] shrink-0 snap-start place-items-center rounded-xl px-2 text-center text-xs font-bold ${isActive ? "bg-emerald-50 text-emerald-800" : "text-slate-500"}`}>{item.label}</NavLink>)}
+        <button className="grid min-h-14 min-w-[6.75rem] shrink-0 snap-start place-items-center rounded-xl px-2 text-center text-xs font-bold text-red-700" type="button" onClick={handleLogout}>Log out</button>
       </nav>
     </div>
   );

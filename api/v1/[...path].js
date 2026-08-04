@@ -3,7 +3,9 @@ import { get, put } from "@vercel/blob";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import process from "node:process";
+import { validateBeneficiary } from "../../src/beneficiaries/beneficiarySchema.js";
 import { normalizedCountryProfile } from "../../src/profile/countries.js";
+import { emailError, normalizeEmail, phoneError } from "../../src/validation/contact.js";
 
 const connectionString = process.env.DATABASE_URL || process.env.DATABASE_POSTGRES_URL;
 const sql = connectionString ? neon(connectionString) : null;
@@ -98,11 +100,14 @@ async function handleAuth(req, res, action) {
   if (action === "register" && method === "POST") {
     const form = await readJson(req);
     if (!form.email || !form.firstName || !form.lastName || String(form.password || "").length < 12) return fail(res, 400, "Enter your name, email, and a password with at least 12 characters.");
+    const contactErrors = { email: emailError(form.email), phone: phoneError(form.phone) };
+    const invalidContacts = Object.fromEntries(Object.entries(contactErrors).filter(([, message]) => message));
+    if (Object.keys(invalidContacts).length) return fail(res, 400, "Check the email address and phone number.", invalidContacts);
     const countryProfile = normalizedCountryProfile(form.countryCode || form.country);
     if (!countryProfile) return fail(res, 400, "Choose a valid country from the complete country list.");
     if (form.termsAccepted !== true || form.privacyAccepted !== true) return fail(res, 400, "Agree to the Terms of Use and Privacy Policy to create an account.");
     endpoint = "/sign-up/email";
-    body = { email: String(form.email).trim().toLowerCase(), password: form.password, name: `${form.firstName} ${form.lastName}`.trim() };
+    body = { email: normalizeEmail(form.email), password: form.password, name: `${form.firstName} ${form.lastName}`.trim() };
     const upstream = await callAuth(req, endpoint, { method: "POST", body });
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
@@ -541,6 +546,8 @@ export default async function handler(req, res) {
         const phone = String(body.phone || "").trim();
         const countryProfile = normalizedCountryProfile(body.countryCode || body.country);
         if (!firstName || !lastName || !phone || !countryProfile) return fail(res, 400, "Enter your name and phone, then choose a valid country.");
+        const invalidPhone = phoneError(phone);
+        if (invalidPhone) return fail(res, 400, invalidPhone, { phone: invalidPhone });
         const profile = { ...(user.profile || {}), firstName, lastName, phone, ...countryProfile };
         if (body.legalAccepted === true && !profile.legalAcceptedAt) Object.assign(profile, { legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
         const fullName = `${firstName} ${lastName}`.trim();
@@ -558,8 +565,9 @@ export default async function handler(req, res) {
         return send(res, 200, { beneficiaries: rows.map(beneficiaryFromRow) });
       }
       if (req.method === "POST" && path.length === 1) {
-        const data = await readJson(req);
-        if (!data.fullName || !data.phone || !data.city || !data.deliveryAddress || !data.contactConsent) return fail(res, 400, "Complete the required beneficiary details.");
+        const validation = validateBeneficiary(await readJson(req));
+        if (!validation.valid) return fail(res, 400, "Check the beneficiary contact and required details.", validation.errors);
+        const data = validation.beneficiary;
         const id = randomUUID();
         await sql`INSERT INTO beneficiaries (id, owner_user_id, data) VALUES (${id}, ${user.id}, ${JSON.stringify(data)}::jsonb)`;
         return send(res, 201, { beneficiary: { ...data, id, publicId: id } });
@@ -569,8 +577,9 @@ export default async function handler(req, res) {
       if (!rows[0]) return fail(res, 404, "Beneficiary not found.");
       if (req.method === "GET" && path.length === 2) return send(res, 200, { beneficiary: beneficiaryFromRow(rows[0]) });
       if (req.method === "PATCH" && path.length === 2) {
-        const data = await readJson(req);
-        if (!data.fullName || !data.phone || !data.city || !data.deliveryAddress || !data.contactConsent) return fail(res, 400, "Complete the required beneficiary details.");
+        const validation = validateBeneficiary(await readJson(req));
+        if (!validation.valid) return fail(res, 400, "Check the beneficiary contact and required details.", validation.errors);
+        const data = validation.beneficiary;
         await sql`UPDATE beneficiaries SET data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${id}`;
         return send(res, 200, { beneficiary: { ...data, id, publicId: id } });
       }
@@ -1093,10 +1102,37 @@ export default async function handler(req, res) {
         const range = url.searchParams.get("range") || "30d";
         const days = { "7d": 7, "30d": 30, "90d": 90, "12m": 365 }[range] || 30;
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-        const customers = (await sql`SELECT count(*)::int count FROM app_profiles WHERE created_at >= ${cutoff}`)[0].count;
-        const beneficiariesCount = (await sql`SELECT count(*)::int count FROM beneficiaries WHERE created_at >= ${cutoff}`)[0].count;
-        const requestsSubmitted = (await sql`SELECT count(*)::int count FROM medication_requests WHERE created_at >= ${cutoff}`)[0].count;
-        const requestsFulfilled = (await sql`SELECT count(*)::int count FROM medication_requests WHERE created_at >= ${cutoff} AND status IN ('delivered','completed')`)[0].count;
+        if (path[2] === "customers") {
+          const rows = await sql`SELECT ap.user_id, ap.email, ap.full_name, ap.profile, ap.created_at, ap.updated_at,
+            count(DISTINCT b.id)::int beneficiary_count, count(DISTINCT r.id)::int request_count,
+            max(r.updated_at) last_request_at
+            FROM app_profiles ap
+            LEFT JOIN beneficiaries b ON b.owner_user_id=ap.user_id
+            LEFT JOIN medication_requests r ON r.owner_user_id=ap.user_id
+            WHERE 'customer'=ANY(ap.roles)
+            GROUP BY ap.user_id
+            ORDER BY ap.created_at DESC LIMIT 500`;
+          return send(res, 200, { customers: rows.map((row) => ({ id: row.user_id, name: row.full_name || "Profile incomplete", email: row.email, country: row.profile?.countryName || row.profile?.country || "Not provided", currency: row.profile?.currency || "Not set", beneficiaryCount: row.beneficiary_count, requestCount: row.request_count, createdAt: row.created_at, lastActivityAt: row.last_request_at || row.updated_at, newInPeriod: new Date(row.created_at) >= new Date(cutoff) })), generatedAt: new Date().toISOString() });
+        }
+        if (path[2] === "beneficiaries") {
+          const rows = await sql`SELECT b.id, b.data, b.archived, b.created_at, b.updated_at, ap.full_name customer_name, ap.email customer_email,
+            count(r.id)::int request_count
+            FROM beneficiaries b
+            JOIN app_profiles ap ON ap.user_id=b.owner_user_id
+            LEFT JOIN medication_requests r ON r.beneficiary_id=b.id
+            GROUP BY b.id, ap.user_id
+            ORDER BY b.created_at DESC LIMIT 500`;
+          return send(res, 200, { beneficiaries: rows.map((row) => ({ id: row.id, name: row.data?.fullName || "Name not provided", relationship: row.data?.relationship || "Not provided", city: row.data?.city || "Not provided", customerName: row.customer_name || "Profile incomplete", customerEmail: row.customer_email, requestCount: row.request_count, archived: row.archived, createdAt: row.created_at, newInPeriod: new Date(row.created_at) >= new Date(cutoff) })), generatedAt: new Date().toISOString() });
+        }
+        const counts = (await sql`SELECT
+          (SELECT count(*)::int FROM app_profiles WHERE 'customer'=ANY(roles)) total_customers,
+          (SELECT count(*)::int FROM app_profiles WHERE 'customer'=ANY(roles) AND created_at >= ${cutoff}) new_customers,
+          (SELECT count(DISTINCT owner_user_id)::int FROM medication_requests WHERE created_at >= ${cutoff}) active_customers,
+          (SELECT count(*)::int FROM beneficiaries) total_beneficiaries,
+          (SELECT count(*)::int FROM beneficiaries WHERE created_at >= ${cutoff}) new_beneficiaries,
+          (SELECT count(*)::int FROM medication_requests WHERE created_at >= ${cutoff}) requests_submitted,
+          (SELECT count(*)::int FROM medication_requests WHERE created_at >= ${cutoff} AND status IN ('delivered','completed')) requests_fulfilled,
+          (SELECT count(*)::int FROM payments WHERE created_at >= ${cutoff}) payments_confirmed`)[0];
         const quoteStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE status='approved')::int approved FROM quotes WHERE created_at >= ${cutoff}`)[0];
         const repeatStats = (await sql`SELECT count(*)::int total, count(*) FILTER (WHERE request_count > 1)::int repeat FROM (SELECT owner_user_id, count(*) request_count FROM medication_requests WHERE created_at >= ${cutoff} GROUP BY owner_user_id) owners`)[0];
         const orderStats = (await sql`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (o.updated_at-o.created_at))/3600) FILTER (WHERE o.status='completed') median_hours FROM orders o WHERE o.created_at >= ${cutoff}`)[0];
@@ -1105,7 +1141,7 @@ export default async function handler(req, res) {
         const outcomes = await sql`SELECT status, count(*)::int value FROM orders WHERE created_at >= ${cutoff} GROUP BY status ORDER BY value DESC`;
         const countryTotal = countryCounts.reduce((sum, entry) => sum + entry.value, 0);
         const outcomeTotal = outcomes.reduce((sum, entry) => sum + entry.value, 0);
-        return send(res, 200, { metrics: { customers, beneficiaries: beneficiariesCount, requestsSubmitted, requestsFulfilled, quoteApprovalRate: quoteStats.total ? quoteStats.approved / quoteStats.total * 100 : 0, repeatCustomerRate: repeatStats.total ? repeatStats.repeat / repeatStats.total * 100 : 0, medianFulfillmentHours: Number(orderStats.median_hours || 0) }, averageOrderValues: averageOrderValues.map((item) => ({ currency: item.currency, amountMinor: Math.round(Number(item.average_minor || 0)), orderCount: item.order_count })), requestsByCustomerCountry: countryCounts.map((item) => ({ key: item.label, label: item.label, value: item.value, percent: countryTotal ? item.value / countryTotal * 100 : 0 })), fulfillmentOutcomes: outcomes.map((item) => ({ key: item.status, label: statusLabel(item.status), value: item.value, percent: outcomeTotal ? item.value / outcomeTotal * 100 : 0 })), generatedAt: new Date().toISOString() });
+        return send(res, 200, { metrics: { customers: counts.total_customers, newCustomers: counts.new_customers, activeCustomers: counts.active_customers, beneficiaries: counts.total_beneficiaries, newBeneficiaries: counts.new_beneficiaries, requestsSubmitted: counts.requests_submitted, requestsFulfilled: counts.requests_fulfilled, paymentsConfirmed: counts.payments_confirmed, quoteApprovalRate: quoteStats.total ? quoteStats.approved / quoteStats.total * 100 : 0, repeatCustomerRate: repeatStats.total ? repeatStats.repeat / repeatStats.total * 100 : 0, medianFulfillmentHours: Number(orderStats.median_hours || 0) }, averageOrderValues: averageOrderValues.map((item) => ({ currency: item.currency, amountMinor: Math.round(Number(item.average_minor || 0)), orderCount: item.order_count })), requestsByCustomerCountry: countryCounts.map((item) => ({ key: item.label, label: item.label, value: item.value, percent: countryTotal ? item.value / countryTotal * 100 : 0 })), fulfillmentOutcomes: outcomes.map((item) => ({ key: item.status, label: statusLabel(item.status), value: item.value, percent: outcomeTotal ? item.value / outcomeTotal * 100 : 0 })), generatedAt: new Date().toISOString() });
       }
       if (path[1] === "audit-logs" && req.method === "GET") {
         if (!requireRole(user, res, ["admin"])) return;

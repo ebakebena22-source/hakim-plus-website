@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { authClient } from "../auth/authClient";
 import { AuthShell, ConfigurationNotice, Field, LocalPreviewNotice, primaryButtonClass } from "../components/AuthShell";
 import CountryPicker from "../components/CountryPicker";
+import { emailError, phoneError } from "../validation/contact";
 
 function FormError({ message }) {
   if (!message) return null;
@@ -75,16 +76,22 @@ export function SignupPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", countryCode: "", password: "", confirmPassword: "", termsAccepted: false, privacyAccepted: false });
+  const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   function update(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
+    setFieldErrors((current) => current[name] ? { ...current, [name]: "" } : current);
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    const contactErrors = { email: emailError(form.email), phone: phoneError(form.phone) };
+    const invalidContacts = Object.fromEntries(Object.entries(contactErrors).filter(([, message]) => message));
+    setFieldErrors(invalidContacts);
+    if (Object.keys(invalidContacts).length) return;
     if (form.password !== form.confirmPassword) return setError("Passwords do not match.");
     if (!form.termsAccepted || !form.privacyAccepted) return setError("You must accept the Terms of Use and Privacy Policy.");
     setBusy(true);
@@ -111,9 +118,9 @@ export function SignupPage() {
           <Field id="first-name" label="First name" autoComplete="given-name" required value={form.firstName} onChange={(event) => update("firstName", event.target.value)} />
           <Field id="last-name" label="Last name" autoComplete="family-name" required value={form.lastName} onChange={(event) => update("lastName", event.target.value)} />
         </div>
-        <Field id="signup-email" label="Email address" type="email" autoComplete="email" required value={form.email} onChange={(event) => update("email", event.target.value)} />
+        <Field id="signup-email" label="Email address" type="email" autoComplete="email" required value={form.email} error={fieldErrors.email} onBlur={(event) => setFieldErrors((current) => ({ ...current, email: emailError(event.target.value) }))} onChange={(event) => update("email", event.target.value)} />
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field id="phone" label="Phone number" type="tel" autoComplete="tel" required value={form.phone} onChange={(event) => update("phone", event.target.value)} />
+          <Field id="phone" label="Phone number" type="tel" inputMode="tel" autoComplete="tel" placeholder="+1 202 555 0123" required value={form.phone} error={fieldErrors.phone} onBlur={(event) => setFieldErrors((current) => ({ ...current, phone: phoneError(event.target.value) }))} onChange={(event) => update("phone", event.target.value)} />
           <CountryPicker id="country" required value={form.countryCode} onChange={(value) => update("countryCode", value)} />
         </div>
         <div className="grid gap-5 sm:grid-cols-2">

@@ -1,3 +1,5 @@
+import { emailError, phoneError } from "../validation/contact.js";
+
 export const emptyBeneficiary = {
   fullName: "",
   relationship: "",
@@ -39,7 +41,12 @@ export function validateBeneficiary(input) {
 
   if (!beneficiary.fullName) errors.fullName = "Enter the beneficiary's full name.";
   if (!beneficiary.relationship) errors.relationship = "Select or enter the relationship.";
-  if (!beneficiary.phone) errors.phone = "Enter a phone number Hakim Plus can use.";
+  const primaryPhoneError = phoneError(beneficiary.phone);
+  const alternativePhoneError = phoneError(beneficiary.alternativePhone, { required: false });
+  const beneficiaryEmailError = emailError(beneficiary.email, { required: false });
+  if (primaryPhoneError) errors.phone = primaryPhoneError;
+  if (alternativePhoneError) errors.alternativePhone = alternativePhoneError;
+  if (beneficiaryEmailError) errors.email = beneficiaryEmailError;
   if (!beneficiary.city) errors.city = "Enter the delivery city.";
   if (!beneficiary.deliveryAddress) errors.deliveryAddress = "Enter a delivery address.";
   if (!beneficiary.dateOfBirth && !beneficiary.age) errors.age = "Provide a date of birth or approximate age.";

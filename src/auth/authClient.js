@@ -1,5 +1,6 @@
 import { apiConfiguration, apiRequest } from "../api/client";
 import { normalizedCountryProfile } from "../profile/countries";
+import { emailError, normalizeEmail, phoneError } from "../validation/contact";
 
 const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
 const localPreviewEnabled = !apiConfiguration.configured && typeof window !== "undefined" && localHosts.has(window.location.hostname);
@@ -22,10 +23,6 @@ function readAccounts() {
 
 function writeAccounts(accounts) {
   window.localStorage.setItem(accountsKey, JSON.stringify(accounts));
-}
-
-function normalizeEmail(email) {
-  return String(email || "").trim().toLowerCase();
 }
 
 function publicUser(account) {
@@ -51,6 +48,9 @@ const localAuthClient = {
   },
   async signUp(details) {
     const email = normalizeEmail(details.email);
+    const invalidEmail = emailError(email);
+    const invalidPhone = phoneError(details.phone);
+    if (invalidEmail || invalidPhone) throw new Error(invalidEmail || invalidPhone);
     const accounts = readAccounts();
     if (accounts.some((account) => account.user.email === email)) throw new Error("An account with this email already exists. Sign in instead.");
     if (String(details.password || "").length < 12) throw new Error("Use a password with at least 12 characters.");

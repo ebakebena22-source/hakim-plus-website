@@ -11,6 +11,8 @@ function withQuery(path, values) {
 
 export const analyticsApi = {
   overview: (range = "30d") => apiRequest(withQuery("/api/v1/admin/analytics", { range })),
+  customers: (range = "30d") => apiRequest(withQuery("/api/v1/admin/analytics/customers", { range })),
+  beneficiaries: (range = "30d") => apiRequest(withQuery("/api/v1/admin/analytics/beneficiaries", { range })),
 };
 
 export const auditApi = {
@@ -24,4 +26,3 @@ export const securityApi = {
 export const activityApi = {
   list: (cursor = "") => apiRequest(withQuery("/api/v1/account-activity", { cursor })),
 };
-
