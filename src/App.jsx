@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import BrandLogo from "./components/BrandLogo";
 import { WhatsAppIcon } from "./components/SocialIcons";
+import { useAuth } from "./auth/AuthContext";
 
 function Icon({ name, size = 22, className = "" }) {
   const common = {
@@ -439,12 +440,16 @@ function AnimatedCard({ children, className = "", dark = false }) {
 }
 
 export default function DiasporaPharmacyLandingPage() {
+  const auth = useAuth();
   const [form, setForm] = useState({ name: "", country: "", phone: "", need: "" });
   const [headlineIndex, setHeadlineIndex] = useState(0);
   const [submitState, setSubmitState] = useState("idle");
   const [submitMessage, setSubmitMessage] = useState("");
 
   const whatsappUrl = useMemo(() => buildWhatsAppUrl("+251971818802", form), [form]);
+  const hasActiveSession = auth.status === "authenticated" && Boolean(auth.user);
+  const accountHref = hasActiveSession ? "/dashboard" : "/signup";
+  const accountCta = hasActiveSession ? "Go to dashboard" : "Create your account";
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -496,8 +501,7 @@ export default function DiasporaPharmacyLandingPage() {
             <a href="#faq" className="transition-colors duration-300 hover:text-slate-950">FAQ</a>
           </div>
           <div className="hidden items-center gap-3 md:flex">
-            <a href="/login" className="text-sm font-semibold text-slate-700 transition hover:text-emerald-700">Customer login</a>
-            <Button href="/signup">Create account</Button>
+            {auth.status === "loading" ? <span className="text-sm font-semibold text-slate-500" role="status">Checking your account…</span> : hasActiveSession ? <Button href="/dashboard">Go to dashboard</Button> : <><a href="/login" className="text-sm font-semibold text-slate-700 transition hover:text-emerald-700">Customer login</a><Button href="/signup">Create account</Button></>}
           </div>
           <a
             href={whatsappUrl}
@@ -533,7 +537,7 @@ export default function DiasporaPharmacyLandingPage() {
               Hakim Plus helps Ethiopians abroad pay for their family’s medicine in Ethiopia with more clarity, control, and confidence. Instead of sending money and hoping for the best, you get confirmation before payment and proof after delivery.
             </p>
             <div className="mt-7 grid gap-3 sm:flex sm:flex-row">
-              <Button href="/signup">Create your account <Icon name="arrow" size={18} /></Button>
+              <Button href={accountHref}>{accountCta} <Icon name="arrow" size={18} /></Button>
               <Button href="#how" variant="secondary">See how it works</Button>
               <Button href={whatsappUrl} external variant="secondary">
                 WhatsApp (+251971818802) <WhatsAppIcon className="h-[18px] w-[18px]" />
@@ -783,7 +787,7 @@ export default function DiasporaPharmacyLandingPage() {
                   </div>
                 ))}
               </div>
-              <Button href="/signup" className="mt-8 w-full" variant={pkg.featured ? "secondary" : "primary"}>Start with this option</Button>
+              <Button href={accountHref} className="mt-8 w-full" variant={pkg.featured ? "secondary" : "primary"}>{hasActiveSession ? "Go to dashboard" : "Start with this option"}</Button>
             </AnimatedCard>
           ))}
         </motion.div>

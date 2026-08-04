@@ -37,7 +37,7 @@ test("public shell contains no third-party behavioral tracking", async () => {
   const landing = await source("src/App.jsx");
   assert.doesNotMatch(html, /facebook\.com\/tr|fbevents\.js|fbq\(/);
   assert.doesNotMatch(landing, /@vercel\/analytics|trackMetaEvent|fbq\(/);
-  assert.match(landing, /<Button href="\/signup"[^>]*>Start with this option<\/Button>/);
+  assert.match(landing, /hasActiveSession \? "Go to dashboard" : "Start with this option"/);
 });
 
 test("Vercel Web Analytics is mounted once at the application root", async () => {
@@ -71,6 +71,15 @@ test("supplied Google and context-aware WhatsApp icons replace placeholder marks
   assert.match(landing, /WhatsAppIcon variant="white"/);
   assert.match(landing, /<WhatsAppIcon className=/);
   assert.match(portal, /WhatsAppIcon variant="white"/);
+});
+
+test("authenticated homepage visitors are directed back to their dashboard", async () => {
+  const landing = await source("src/App.jsx");
+  assert.match(landing, /useAuth\(\)/);
+  assert.match(landing, /auth\.status === "authenticated"/);
+  assert.match(landing, /hasActiveSession \? "\/dashboard" : "\/signup"/);
+  assert.match(landing, /hasActiveSession \? <Button href="\/dashboard">Go to dashboard<\/Button>/);
+  assert.match(landing, /hasActiveSession \? "Go to dashboard" : "Start with this option"/);
 });
 
 test("client analytics accepts only explicitly safe context", async () => {
