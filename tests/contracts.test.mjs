@@ -314,8 +314,19 @@ test("customer dashboard loads live portal data instead of placeholder counts", 
   const portal = await source("src/pages/PortalPages.jsx");
   for (const api of ["beneficiariesApi.list", "requestsApi.list", "ordersApi.list", "notificationsApi.list"]) assert.ok(portal.includes(api), `dashboard must use ${api}`);
   assert.doesNotMatch(portal, /\[\['Beneficiaries', '0'\]/);
-  assert.match(portal, /actionRequests/);
+  assert.match(portal, /const actionRequests = state\.requests\.filter\(\(request\) => \["quote_available", "required"\]\.includes\(request\.paymentState\)\)/);
+  assert.match(portal, /Review quotes and payments/);
+  assert.match(portal, /No quotes or payments need action/);
+  assert.doesNotMatch(portal, /actionRequests\.length \+ unreadNotifications\.length/);
+  assert.match(portal, /unread notification/);
+  assert.match(portal, /to="\/dashboard\/notifications">View all/);
   assert.match(portal, /recentActivity/);
+  const apiSource = await source("api/v1/[...path].js");
+  assert.match(apiSource, /actionRequired: \["quote_ready", "awaiting_payment"\]\.includes\(row\.status\)/);
+  assert.doesNotMatch(apiSource, /actionRequired: \[[^\]]+awaiting_information/);
+  const requestPage = await source("src/pages/RequestPages.jsx");
+  assert.match(requestPage, /useSearchParams/);
+  assert.match(requestPage, /requestsApi\.list\(\{ status: initialFilter \}\)/);
 });
 
 test("signup establishes a session when Neon does not require verification", async () => {

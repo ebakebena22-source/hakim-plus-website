@@ -30,7 +30,7 @@ export function DashboardPage() {
     return () => { active = false; };
   }, []);
 
-  const actionRequests = state.requests.filter((request) => request.actionRequired);
+  const actionRequests = state.requests.filter((request) => ["quote_available", "required"].includes(request.paymentState));
   const unreadNotifications = state.notifications.filter((notification) => !notification.readAt);
   const recentActivity = state.notifications.slice(0, 3);
   return (
@@ -40,16 +40,21 @@ export function DashboardPage() {
         <Link className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-bold text-white" to="/dashboard/requests/new">New medication request</Link>
       </div>
       {state.error && <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">{state.error}</div>}
-      <section className="mt-8 rounded-[2rem] border border-amber-200 bg-amber-50 p-6">
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-800">Action required</p>
-        {state.status === "loading" ? <p className="mt-3 text-sm font-semibold text-amber-900" role="status">Checking your account…</p> : actionRequests.length || unreadNotifications.length ? <><h2 className="mt-3 text-xl font-bold text-amber-950">{actionRequests.length + unreadNotifications.length} update(s) need your attention</h2><div className="mt-4 flex flex-wrap gap-3">{actionRequests.length > 0 && <Link className="rounded-xl bg-amber-900 px-4 py-2 text-sm font-bold text-white" to="/dashboard/requests?status=needs_action">Review requests</Link>}{unreadNotifications.length > 0 && <Link className="rounded-xl border border-amber-500 bg-white px-4 py-2 text-sm font-bold text-amber-900" to="/dashboard/notifications">Read notifications</Link>}</div></> : <><h2 className="mt-3 text-xl font-bold text-amber-950">Nothing needs your attention</h2><p className="mt-2 text-sm text-amber-900">Quotes, payment requests, and information requests will appear here.</p></>}
+      <section className="mt-8 grid gap-6 xl:grid-cols-2">
+        <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-6 sm:p-8">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-800">Action required</p>
+          {state.status === "loading" ? <p className="mt-3 text-sm font-semibold text-amber-900" role="status">Checking for quotes and payments…</p> : actionRequests.length ? <><h2 className="mt-3 text-xl font-bold text-amber-950">{actionRequests.length} {actionRequests.length === 1 ? "request needs" : "requests need"} your action</h2><p className="mt-2 text-sm text-amber-900">Review available quotes or complete required payments.</p><Link className="mt-5 inline-flex rounded-xl bg-amber-900 px-4 py-2 text-sm font-bold text-white" to="/dashboard/requests?status=needs_action">Review quotes and payments</Link></> : <><h2 className="mt-3 text-xl font-bold text-amber-950">No quotes or payments need action</h2><p className="mt-2 text-sm text-amber-900">Quotes ready for review and payments due will appear here.</p></>}
+        </div>
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8">
+          <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Notifications</p><h2 className="mt-3 text-xl font-bold">{state.status === "loading" ? "Loading notifications…" : unreadNotifications.length ? `${unreadNotifications.length} unread notification${unreadNotifications.length === 1 ? "" : "s"}` : "You are all caught up"}</h2></div><Link className="shrink-0 text-sm font-bold text-emerald-700" to="/dashboard/notifications">View all</Link></div>
+          {state.status === "loading" ? <p className="mt-4 text-sm text-slate-600" role="status">Loading your latest updates…</p> : recentActivity.length ? <div className="mt-4 space-y-3">{recentActivity.map((notification) => <div key={notification.id} className="rounded-xl bg-slate-50 p-4"><h3 className="text-sm font-bold">{notification.title}</h3><p className="mt-1 text-xs leading-5 text-slate-600">{notification.message}</p>{notification.actionPath && <Link className="mt-2 inline-flex text-xs font-bold text-emerald-700" to={notification.actionPath}>{notification.actionLabel || "View update"} →</Link>}</div>)}</div> : <p className="mt-4 text-sm leading-6 text-slate-600">Important request, payment, and delivery updates will appear here.</p>}
+        </div>
       </section>
       <div className="mt-6 grid gap-5 sm:grid-cols-3">
         {[["Beneficiaries", state.beneficiaries.length], ["Active requests", state.requests.filter((request) => !request.completed && !["cancelled", "unable_to_fulfill"].includes(request.status)).length], ["Active orders", state.orders.length]].map(([label, value]) => <div key={label} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-semibold text-slate-500">{label}</p><p className="mt-3 text-3xl font-bold">{state.status === "loading" ? "—" : value}</p></div>)}
       </div>
-      <section className="mt-6 grid gap-6 xl:grid-cols-2">
+      <section className="mt-6">
         <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Beneficiaries</p><h2 className="mt-3 text-xl font-bold">Manage your loved ones</h2><p className="mt-2 text-sm leading-6 text-slate-600">Save contact, consent, and delivery details securely for each person you support.</p><Link className="mt-6 inline-flex min-h-11 items-center rounded-xl border border-emerald-600 px-4 text-sm font-bold text-emerald-700" to="/dashboard/beneficiaries">View beneficiaries</Link></div>
-        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 sm:p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Recent activity</p>{recentActivity.length ? <div className="mt-4 space-y-3">{recentActivity.map((notification) => <div key={notification.id} className="rounded-xl bg-slate-50 p-4"><h2 className="text-sm font-bold">{notification.title}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{notification.message}</p>{notification.actionPath && <Link className="mt-2 inline-flex text-xs font-bold text-emerald-700" to={notification.actionPath}>{notification.actionLabel || "View update"} →</Link>}</div>)}</div> : <><h2 className="mt-3 text-xl font-bold">No account activity yet</h2><p className="mt-2 text-sm leading-6 text-slate-600">Request, quote, payment, and delivery updates will be recorded here.</p></>}</div>
       </section>
     </main>
   );
