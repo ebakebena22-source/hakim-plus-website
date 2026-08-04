@@ -200,7 +200,6 @@ test("signup establishes a session when Neon does not require verification", asy
 test("transactional emails include event details without the removed reply warning", async () => {
   const api = await source("api/v1/[...path].js");
   assert.match(api, /function quoteEmailDetails/);
-  assert.match(api, /Quote number/);
   assert.match(api, /Quote total/);
   assert.match(api, /Message preview/);
   assert.match(api, /Payment number/);
@@ -209,4 +208,6 @@ test("transactional emails include event details without the removed reply warni
   assert.match(api, /Your quote is ready — payment required/);
   assert.match(api, /"Pay now", \{ sendEmail: false \}/);
   assert.doesNotMatch(api, /Do not send prescriptions or sensitive medical details by replying to this email/);
+  const quoteEmail = api.slice(api.indexOf("function quoteEmailDetails"), api.indexOf("function renderEmailDetails"));
+  assert.doesNotMatch(quoteEmail, /(Request|Quote|Transfer) number/);
 });

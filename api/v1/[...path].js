@@ -435,11 +435,9 @@ function formatEmailDate(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Addis_Ababa" }) : String(value || "");
 }
 
-function quoteEmailDetails(quote, requestNumber, beneficiaryName) {
+function quoteEmailDetails(quote, beneficiaryName) {
   return {
     fields: [
-      { label: "Quote number", value: quote.quoteNumber },
-      { label: "Request number", value: requestNumber },
       { label: "Beneficiary", value: beneficiaryName },
       { label: "Quote total", value: formatMoney(quote.grandTotalMinor, quote.currency) },
       { label: "Valid until", value: formatEmailDate(quote.expiresAt) },
@@ -618,7 +616,6 @@ async function saveOrderState(row, nextStatus, data, actorId, eventType, custome
   if (customerTitle) await notify(ownerId, customerTitle, customerMessage || statusLabel(nextStatus), `/dashboard/orders/${row.id}`, "View order", {
     fields: [
       { label: "Order number", value: row.order_number },
-      { label: "Request number", value: row.request_number },
       { label: "Beneficiary", value: row.beneficiary_data?.fullName },
       { label: "Order total", value: formatMoney(row.amount_minor, row.currency) },
       { label: "Status", value: statusLabel(nextStatus) },
@@ -736,7 +733,6 @@ export default async function handler(req, res) {
         await audit(user.id, "request.created", "medication_request", id, { ownerId: user.id });
         await notify(user.id, "Request submitted", "Hakim Plus received your medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request", {
           fields: [
-            { label: "Request number", value: requestNumber },
             { label: "Beneficiary", value: beneficiaries[0].data?.fullName },
             { label: "Submitted using", value: method.replaceAll("_", " ") },
             { label: "Next step", value: "Pharmacy review" },
@@ -828,8 +824,6 @@ export default async function handler(req, res) {
         await audit(user.id, "bank_transfer.submitted", "bank_transfer", id, { ownerId: user.id, requestId });
         await notify(user.id, "Payment receipt received", "Your bank-transfer receipt was uploaded successfully and is awaiting verification.", "/dashboard/payments", "View payment status", {
           fields: [
-            { label: "Transfer number", value: transferNumber },
-            { label: "Request number", value: rows[0].request_number },
             { label: "Amount", value: formatMoney(quote.grandTotalMinor, quote.currency) },
             { label: "Bank reference", value: String(body.transferReference || "Not provided") },
             { label: "Transfer date", value: body.transferDate || "Not provided" },
@@ -928,7 +922,6 @@ export default async function handler(req, res) {
         await audit(user.id, "order.requested_again", "order", row.id, { ownerId: user.id, newRequestId: id });
         await notify(user.id, "Request submitted", "Hakim Plus received your repeat medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request", {
           fields: [
-            { label: "Request number", value: requestNumber },
             { label: "Beneficiary", value: row.beneficiary_data?.fullName },
             { label: "Previous order", value: row.order_number },
             { label: "Next step", value: "Pharmacy review" },
@@ -1035,7 +1028,7 @@ export default async function handler(req, res) {
             await sql`UPDATE medication_requests SET status='quote_ready', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
             await audit(user.id, "quote.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
             const sentQuote = { ...quoteTotals(quotes[0].data), quoteNumber: quotes[0].quote_number };
-            await notify(row.owner_user_id, "Your quote is ready", "The pharmacy has reviewed your request and prepared the quote below. Review and approve it, then complete the bank transfer and upload your receipt.", `/dashboard/requests/${requestId}/quote`, "Review quote and continue to payment", { ...quoteEmailDetails(sentQuote, row.request_number, row.beneficiary_data?.fullName), subject: "Your quote is ready — payment required" });
+            await notify(row.owner_user_id, "Your quote is ready", "The pharmacy has reviewed your request and prepared the quote below. Review and approve it, then complete the bank transfer and upload your receipt.", `/dashboard/requests/${requestId}/quote`, "Review quote and continue to payment", { ...quoteEmailDetails(sentQuote, row.beneficiary_data?.fullName), subject: "Your quote is ready — payment required" });
             return send(res, 200, { ok: true });
           }
         }
@@ -1066,7 +1059,7 @@ export default async function handler(req, res) {
           await sql`UPDATE medication_requests SET customer_messages=customer_messages || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
           await audit(user.id, "staff_message.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
           await notify(row.owner_user_id, "New message from Hakim Plus", "A staff member sent an update about your medication request.", `/dashboard/requests/${requestId}/messages`, "Read message", {
-            fields: [{ label: "Request number", value: row.request_number }, { label: "Beneficiary", value: row.beneficiary_data?.fullName }],
+            fields: [{ label: "Beneficiary", value: row.beneficiary_data?.fullName }],
             note: message,
             noteLabel: "Message preview",
           });
@@ -1086,7 +1079,7 @@ export default async function handler(req, res) {
           }
           await audit(user.id, `request.${path[3]}`, "medication_request", requestId, { ownerId: row.owner_user_id, reason: text.slice(0, 160) });
           await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request", {
-            fields: [{ label: "Request number", value: row.request_number }, { label: "Beneficiary", value: row.beneficiary_data?.fullName }, { label: "Status", value: statusLabel(status) }],
+            fields: [{ label: "Beneficiary", value: row.beneficiary_data?.fullName }, { label: "Status", value: statusLabel(status) }],
             note: text,
             noteLabel: path[3] === "request-information" ? "Information requested" : "Pharmacy update",
           });
@@ -1143,8 +1136,6 @@ export default async function handler(req, res) {
           await notify(rows[0].owner_user_id, "Payment confirmed", "Your bank transfer was verified and the pharmacy order was created.", "/dashboard/orders", "Track order", {
             fields: [
               { label: "Payment number", value: payments[0].payment_number },
-              { label: "Transfer number", value: rows[0].transfer_number },
-              { label: "Request number", value: rows[0].request_number },
               { label: "Order number", value: orderNumber },
               { label: "Beneficiary", value: rows[0].beneficiary_data?.fullName },
               { label: "Amount confirmed", value: formatMoney(rows[0].amount_minor, rows[0].currency) },
@@ -1162,8 +1153,6 @@ export default async function handler(req, res) {
           await audit(user.id, "bank_transfer.rejected", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
           await notify(rows[0].owner_user_id, "Transfer receipt needs attention", String(body.reason).trim(), `/dashboard/requests/${rows[0].request_id}/payment`, "Resubmit receipt", {
             fields: [
-              { label: "Transfer number", value: rows[0].transfer_number },
-              { label: "Request number", value: rows[0].request_number },
               { label: "Amount", value: formatMoney(rows[0].amount_minor, rows[0].currency) },
               { label: "Status", value: "Action required" },
             ],
