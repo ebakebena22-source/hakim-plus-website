@@ -940,13 +940,15 @@ export default async function handler(req, res) {
 
     if (path[0] === "admin") {
       if (path[1] === "dashboard" && req.method === "GET") {
+        if (!requireRole(user, res, ["admin", "pharmacist", "customer_support", "fulfillment", "delivery_operations"])) return;
         const requestRows = await sql`SELECT status, count(*)::int count FROM medication_requests GROUP BY status`;
         const orderRows = await sql`SELECT status, count(*)::int count FROM orders GROUP BY status`;
+        const pendingBankTransfers = (await sql`SELECT count(*)::int count FROM bank_transfers WHERE status='pending'`)[0].count;
         const requestCounts = Object.fromEntries(requestRows.map((row) => [row.status, row.count]));
         const orderCounts = Object.fromEntries(orderRows.map((row) => [row.status, row.count]));
         const urgentRequests = (await sql`SELECT count(*)::int count FROM medication_requests WHERE COALESCE((data->>'urgent')::boolean, false)=true AND status NOT IN ('delivered','completed','cancelled','unable_to_fulfill')`)[0].count;
         const totalOverdue = (await sql`SELECT count(*)::int count FROM medication_requests WHERE updated_at < now() - interval '24 hours' AND status NOT IN ('delivered','completed','cancelled','unable_to_fulfill')`)[0].count;
-        return send(res, 200, { metrics: {
+        const metrics = {
           newRequests: requestCounts.submitted || 0,
           awaitingReview: (requestCounts.under_review || 0) + (requestCounts.under_pharmacy_review || 0),
           beneficiaryContact: requestCounts.contacting_beneficiary || 0,
@@ -956,7 +958,18 @@ export default async function handler(req, res) {
           outForDelivery: orderCounts.out_for_delivery || 0,
           completedOrders: orderCounts.completed || 0,
           deliveryFailed: orderCounts.delivery_failed || 0,
-        }, totalOverdue, urgentRequests });
+        };
+        return send(res, 200, {
+          metrics,
+          actionCounts: {
+            medicationRequests: metrics.newRequests + metrics.awaitingReview + metrics.beneficiaryContact + metrics.awaitingQuote,
+            bankTransfers: pendingBankTransfers,
+            ordersDelivery: metrics.paymentsReceived + metrics.outForDelivery + metrics.deliveryFailed,
+            completedOrders: metrics.completedOrders + (orderCounts.delivered || 0),
+          },
+          totalOverdue,
+          urgentRequests,
+        });
       }
       if (path[1] === "requests") {
         if (!requireRole(user, res, ["admin", "pharmacist", "customer_support"])) return;

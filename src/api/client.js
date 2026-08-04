@@ -1,5 +1,7 @@
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
+export const ADMIN_ACTION_COUNTS_CHANGED_EVENT = "hakim-plus:admin-action-counts-changed";
+
 export class ApiConfigurationError extends Error {
   constructor() {
     super("The secure Hakim Plus account service has not been connected yet.");
@@ -32,6 +34,11 @@ export async function apiRequest(path, options = {}) {
     error.status = response.status;
     error.details = payload.errors;
     throw error;
+  }
+
+  const method = String(options.method || "GET").toUpperCase();
+  if (method !== "GET" && path.startsWith("/api/v1/admin/") && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(ADMIN_ACTION_COUNTS_CHANGED_EVENT));
   }
 
   return payload;

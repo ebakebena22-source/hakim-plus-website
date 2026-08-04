@@ -187,13 +187,31 @@ test("completed orders have a separate read-only admin archive", async () => {
   assert.match(router, /path="completed-orders"/);
   assert.match(router, /<AdminOrdersPage completedOnly \/>/);
   assert.match(router, /<AdminOrderDetailPage completedView \/>/);
-  assert.match(dashboard, /\["completedOrders", "Completed", "\/admin\/completed-orders"/);
+  assert.match(dashboard, /key: "completedOrders", label: "Completed orders", path: "\/admin\/completed-orders"/);
   assert.doesNotMatch(dashboard, /queue=completed/);
   assert.match(ordersPage, /navigate\(`\/admin\/completed-orders\/\$\{encodeURIComponent\(id\)\}`/);
   assert.match(ordersPage, /This order is archived as read-only, so delivery cannot be submitted again/);
   assert.doesNotMatch(ordersPage.slice(ordersPage.indexOf("operationalQueues"), ordersPage.indexOf("function formatDate")), /completed/);
   assert.match(api, /queue === "active"[^\n]+!\["completed", "delivered", "cancelled"\]/);
   assert.match(api, /queue === "completed"[^\n]+\["completed", "delivered"\]\.includes/);
+});
+
+test("operations dashboard and navigation share four authoritative queue counts", async () => {
+  const api = await source("api/v1/[...path].js");
+  const dashboard = await source("src/pages/AdminDashboardPage.jsx");
+  const layout = await source("src/layouts/AdminLayout.jsx");
+  const client = await source("src/api/client.js");
+  for (const key of ["medicationRequests", "bankTransfers", "ordersDelivery", "completedOrders"]) {
+    assert.match(api, new RegExp(`${key}:`));
+    assert.match(dashboard, new RegExp(`key: "${key}"`));
+    assert.match(layout, new RegExp(`countKey: "${key}"`));
+  }
+  for (const removedCard of ["New requests", "Awaiting review", "Need beneficiary contact", "Awaiting quote", "Awaiting customer approval", "Payments received", "Out for delivery", "Delivery failed"]) {
+    assert.doesNotMatch(dashboard, new RegExp(removedCard));
+  }
+  assert.match(api, /bank_transfers WHERE status='pending'/);
+  assert.match(client, /ADMIN_ACTION_COUNTS_CHANGED_EVENT/);
+  assert.match(layout, /setInterval\(loadActionCounts, 30000\)/);
 });
 
 test("Google social sign-in cannot reuse the previous Hakim Plus session", async () => {
