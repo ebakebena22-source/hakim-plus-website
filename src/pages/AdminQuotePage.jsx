@@ -80,7 +80,7 @@ export default function AdminQuotePage() {
   async function sendQuote() {
     const saved = await saveDraft(false);
     if (!saved) return;
-    if (!window.confirm("Send this quote to the customer? They will be able to approve, request changes, or decline it.")) return setAction({ busy: false, message: "Quote draft saved but not sent.", error: "" });
+    if (!window.confirm("Send this quote and an email to the customer? The email will include the itemized quote and payment instructions.")) return setAction({ busy: false, message: "Quote draft saved but not sent.", error: "" });
     setAction({ busy: true, message: "", error: "" });
     try { await adminQuotesApi.send(id); setAction({ busy: false, message: "Quote sent to the customer.", error: "" }); navigate(`/admin/requests/${encodeURIComponent(id)}`, { replace: true }); }
     catch (error) { setAction({ busy: false, message: "", error: error.message }); }

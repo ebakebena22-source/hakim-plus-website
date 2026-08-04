@@ -21,7 +21,7 @@ export default function AdminTransfersPage() {
   useEffect(() => { load(); }, [load]);
 
   async function approve(transfer) {
-    if (!window.confirm(`Confirm that ${formatMinorAmount(transfer.amountMinor, transfer.currency)} was received? This creates the fulfillment order.`)) return;
+    if (!window.confirm(`Confirm that ${formatMinorAmount(transfer.amountMinor, transfer.currency)} was received? This creates the fulfillment order and emails the customer.`)) return;
     try { await adminTransfersApi.approve(transfer.id); setState((current) => ({ ...current, message: "Transfer approved and fulfillment order created." })); await load(); }
     catch (error) { setState((current) => ({ ...current, error: error.message })); }
   }
@@ -29,6 +29,7 @@ export default function AdminTransfersPage() {
   async function reject(transfer) {
     const reason = window.prompt("Why is this transfer being rejected? The customer will see this reason.");
     if (!reason?.trim()) return;
+    if (!window.confirm("Reject this transfer and email the reason to the customer?")) return;
     try { await adminTransfersApi.reject(transfer.id, reason.trim()); setState((current) => ({ ...current, message: "Transfer rejected and the customer was notified in the portal." })); await load(); }
     catch (error) { setState((current) => ({ ...current, error: error.message })); }
   }

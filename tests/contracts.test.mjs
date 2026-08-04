@@ -211,3 +211,20 @@ test("transactional emails include event details without the removed reply warni
   const quoteEmail = api.slice(api.indexOf("function quoteEmailDetails"), api.indexOf("function renderEmailDetails"));
   assert.doesNotMatch(quoteEmail, /(Request|Quote|Transfer) number/);
 });
+
+test("admin actions confirm before triggering customer email", async () => {
+  const requestPage = await source("src/pages/AdminRequestPages.jsx");
+  const quotePage = await source("src/pages/AdminQuotePage.jsx");
+  const transferPage = await source("src/pages/AdminTransfersPage.jsx");
+  const orderPage = await source("src/pages/AdminOrderPages.jsx");
+  for (const prompt of [
+    "Send this message and an email preview to the customer?",
+    "Send this information request and an email to the customer?",
+    "Mark this request unable to fulfill and email the customer?",
+    "Cancel this medication request and email the customer?",
+  ]) assert.ok(requestPage.includes(`window.confirm("${prompt}")`), `missing confirmation: ${prompt}`);
+  assert.match(quotePage, /window\.confirm\("Send this quote and an email to the customer\?/);
+  assert.match(transferPage, /creates the fulfillment order and emails the customer/);
+  assert.match(transferPage, /Reject this transfer and email the reason to the customer/);
+  for (const prompt of ["mark this order completed, and email the customer", "out for delivery and email the customer", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
+});
