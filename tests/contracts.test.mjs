@@ -206,5 +206,7 @@ test("transactional emails include event details without the removed reply warni
   assert.match(api, /Payment number/);
   assert.match(api, /Order number/);
   assert.match(api, /Payment receipt received/);
+  assert.match(api, /Your quote is ready — payment required/);
+  assert.match(api, /"Pay now", \{ sendEmail: false \}/);
   assert.doesNotMatch(api, /Do not send prescriptions or sensitive medical details by replying to this email/);
 });

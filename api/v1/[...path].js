@@ -415,7 +415,7 @@ async function notify(ownerUserId, title, message, actionPath, actionLabel, emai
   const id = randomUUID();
   await sql`INSERT INTO notifications (id, owner_user_id, title, message, action_path, action_label)
     VALUES (${id}, ${ownerUserId}, ${title}, ${message}, ${actionPath || null}, ${actionLabel || null})`;
-  await sendCustomerEmail(ownerUserId, `notification:${id}`, title, message, actionPath, actionLabel, emailDetails);
+  if (emailDetails.sendEmail !== false) await sendCustomerEmail(ownerUserId, `notification:${id}`, emailDetails.subject || title, message, actionPath, actionLabel, emailDetails);
 }
 
 function escapeHtml(value) {
@@ -851,8 +851,7 @@ export default async function handler(req, res) {
         const paymentEvent = { id: randomUUID(), status: "awaiting_payment", customerLabel: "Payment required", note: "Your quote is approved and payment is required.", createdAt: new Date().toISOString() };
         await sql`UPDATE medication_requests SET status='awaiting_payment', status_history=status_history || ${JSON.stringify([paymentEvent])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
         await audit(user.id, "quote.approved", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
-        const approvedQuote = { ...quoteTotals(rows[0].data), quoteNumber: rows[0].quote_number };
-        await notify(user.id, "Payment required", "Your quote is approved. Complete the bank transfer and upload the receipt.", `/dashboard/requests/${rows[0].request_id}/payment`, "Pay now", quoteEmailDetails(approvedQuote, rows[0].request_number, rows[0].beneficiary_data?.fullName));
+        await notify(user.id, "Payment required", "Your quote is approved. Complete the bank transfer and upload the receipt.", `/dashboard/requests/${rows[0].request_id}/payment`, "Pay now", { sendEmail: false });
         return send(res, 200, { quote: { id: quoteId, status: "approved" }, paymentPath: `/dashboard/requests/${rows[0].request_id}/payment` });
       }
       const body = await readJson(req);
@@ -1036,7 +1035,7 @@ export default async function handler(req, res) {
             await sql`UPDATE medication_requests SET status='quote_ready', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
             await audit(user.id, "quote.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
             const sentQuote = { ...quoteTotals(quotes[0].data), quoteNumber: quotes[0].quote_number };
-            await notify(row.owner_user_id, "Your quote is ready", "The pharmacy has reviewed your request and prepared the quote below.", `/dashboard/requests/${requestId}/quote`, "Review quote", quoteEmailDetails(sentQuote, row.request_number, row.beneficiary_data?.fullName));
+            await notify(row.owner_user_id, "Your quote is ready", "The pharmacy has reviewed your request and prepared the quote below. Review and approve it, then complete the bank transfer and upload your receipt.", `/dashboard/requests/${requestId}/quote`, "Review quote and continue to payment", { ...quoteEmailDetails(sentQuote, row.request_number, row.beneficiary_data?.fullName), subject: "Your quote is ready — payment required" });
             return send(res, 200, { ok: true });
           }
         }
