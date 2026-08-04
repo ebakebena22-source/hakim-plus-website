@@ -411,26 +411,64 @@ function requireRole(user, res, allowedRoles) {
   return false;
 }
 
-async function notify(ownerUserId, title, message, actionPath, actionLabel) {
+async function notify(ownerUserId, title, message, actionPath, actionLabel, emailDetails = {}) {
   const id = randomUUID();
   await sql`INSERT INTO notifications (id, owner_user_id, title, message, action_path, action_label)
     VALUES (${id}, ${ownerUserId}, ${title}, ${message}, ${actionPath || null}, ${actionLabel || null})`;
-  await sendCustomerEmail(ownerUserId, `notification:${id}`, title, message, actionPath, actionLabel);
+  await sendCustomerEmail(ownerUserId, `notification:${id}`, title, message, actionPath, actionLabel, emailDetails);
 }
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character]);
 }
 
-function emailDocument(title, message, actionPath, actionLabel, customerName) {
+function formatMoney(amountMinor, currency) {
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency: String(currency || "USD").toUpperCase() }).format(Number(amountMinor || 0) / 100);
+  } catch {
+    return `${String(currency || "").toUpperCase()} ${(Number(amountMinor || 0) / 100).toFixed(2)}`.trim();
+  }
+}
+
+function formatEmailDate(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Addis_Ababa" }) : String(value || "");
+}
+
+function quoteEmailDetails(quote, requestNumber, beneficiaryName) {
+  return {
+    fields: [
+      { label: "Quote number", value: quote.quoteNumber },
+      { label: "Request number", value: requestNumber },
+      { label: "Beneficiary", value: beneficiaryName },
+      { label: "Quote total", value: formatMoney(quote.grandTotalMinor, quote.currency) },
+      { label: "Valid until", value: formatEmailDate(quote.expiresAt) },
+    ],
+    items: (quote.items || []).map((item) => ({
+      name: item.medicationName,
+      description: `${item.availability === "available" ? "Available" : item.availability === "partial" ? "Partially available" : "Unavailable"}${item.quotedQuantity ? ` · Qty ${item.quotedQuantity}` : ""}${item.pharmacyNote ? ` · ${item.pharmacyNote}` : ""}`,
+      amount: item.availability === "unavailable" ? "—" : formatMoney(item.lineTotalMinor, quote.currency),
+    })),
+  };
+}
+
+function renderEmailDetails(details = {}) {
+  const fields = (details.fields || []).filter((field) => field?.label && field?.value !== undefined && field?.value !== null && String(field.value).trim()).map((field) => `<tr><td style="padding:7px 12px 7px 0;color:#64748b;vertical-align:top">${escapeHtml(field.label)}</td><td style="padding:7px 0;font-weight:700;text-align:right;vertical-align:top">${escapeHtml(field.value)}</td></tr>`).join("");
+  const items = (details.items || []).filter((item) => item?.name).map((item) => `<tr><td style="padding:12px 10px 12px 0;border-top:1px solid #e2e8f0"><strong>${escapeHtml(item.name)}</strong>${item.description ? `<div style="margin-top:4px;color:#64748b;font-size:13px;line-height:1.45">${escapeHtml(item.description)}</div>` : ""}</td><td style="padding:12px 0 12px 10px;border-top:1px solid #e2e8f0;text-align:right;font-weight:700;white-space:nowrap">${escapeHtml(item.amount || "")}</td></tr>`).join("");
+  const note = details.note ? `<div style="margin-top:20px;padding:16px;border-left:4px solid #10b981;background:#ecfdf5;color:#064e3b;white-space:pre-wrap;line-height:1.6"><strong style="display:block;margin-bottom:6px">${escapeHtml(details.noteLabel || "Details")}</strong>${escapeHtml(String(details.note).slice(0, 2000))}</div>` : "";
+  if (!fields && !items && !note) return "";
+  return `<div style="margin-top:22px;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px">${fields ? `<table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">${fields}</table>` : ""}${items ? `<h2 style="font-size:16px;margin:20px 0 6px">Quote items</h2><table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">${items}</table>` : ""}</div>${note}`;
+}
+
+function emailDocument(title, message, actionPath, actionLabel, customerName, details = {}) {
   const firstName = String(customerName || "").trim().split(/\s+/)[0];
   const greeting = firstName ? `Hello ${escapeHtml(firstName)},` : "Hello,";
   const actionUrl = actionPath ? `${APP_URL}${actionPath.startsWith("/") ? actionPath : `/${actionPath}`}` : "";
   const action = actionUrl ? `<p style="margin:28px 0"><a href="${escapeHtml(actionUrl)}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:13px 20px;border-radius:10px;font-weight:700">${escapeHtml(actionLabel || "View update")}</a></p>` : "";
-  return `<!doctype html><html><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a"><div style="display:none;max-height:0;overflow:hidden">${escapeHtml(message)}</div><div style="max-width:600px;margin:0 auto;padding:32px 18px"><div style="background:#064e3b;color:#fff;padding:18px 24px;border-radius:16px 16px 0 0;font-size:20px;font-weight:800">Hakim Plus</div><div style="background:#fff;padding:28px 24px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 16px 16px"><p style="margin:0 0 20px">${greeting}</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 14px">${escapeHtml(title)}</h1><p style="font-size:16px;line-height:1.65;color:#475569;margin:0">${escapeHtml(message)}</p>${action}<p style="font-size:13px;line-height:1.5;color:#64748b;margin:28px 0 0">This is an automated service message from Hakim Plus. Do not send prescriptions or sensitive medical details by replying to this email.</p></div></div></body></html>`;
+  return `<!doctype html><html><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a"><div style="display:none;max-height:0;overflow:hidden">${escapeHtml(message)}</div><div style="max-width:600px;margin:0 auto;padding:32px 18px"><div style="background:#064e3b;color:#fff;padding:18px 24px;border-radius:16px 16px 0 0;font-size:20px;font-weight:800">Hakim Plus</div><div style="background:#fff;padding:28px 24px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 16px 16px"><p style="margin:0 0 20px">${greeting}</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 14px">${escapeHtml(title)}</h1><p style="font-size:16px;line-height:1.65;color:#475569;margin:0">${escapeHtml(message)}</p>${renderEmailDetails(details)}${action}</div></div></body></html>`;
 }
 
-async function sendCustomerEmail(ownerUserId, eventKey, subject, message, actionPath, actionLabel) {
+async function sendCustomerEmail(ownerUserId, eventKey, subject, message, actionPath, actionLabel, details = {}) {
   if (!process.env.RESEND_API_KEY) return;
   try {
     const rows = await sql`SELECT p.email, p.full_name, COALESCE(cp.data, '{}'::jsonb) preferences
@@ -442,7 +480,7 @@ async function sendCustomerEmail(ownerUserId, eventKey, subject, message, action
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json", "Idempotency-Key": eventKey },
-      body: JSON.stringify({ from: RESEND_FROM, to: [recipient], subject, html: emailDocument(subject, message, actionPath, actionLabel, rows[0].full_name) }),
+      body: JSON.stringify({ from: RESEND_FROM, to: [recipient], subject, html: emailDocument(subject, message, actionPath, actionLabel, rows[0].full_name, details) }),
     });
     const payload = await response.json().catch(() => ({}));
     const deliveryStatus = response.ok ? "sent" : "failed";
@@ -577,7 +615,17 @@ async function saveOrderState(row, nextStatus, data, actorId, eventType, custome
   const ownerId = row.owner_user_id;
   await sql`UPDATE orders SET status=${nextStatus}, data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${row.id}`;
   await audit(actorId, eventType, "order", row.id, { ownerId, status: nextStatus });
-  if (customerTitle) await notify(ownerId, customerTitle, customerMessage || statusLabel(nextStatus), `/dashboard/orders/${row.id}`, "View order");
+  if (customerTitle) await notify(ownerId, customerTitle, customerMessage || statusLabel(nextStatus), `/dashboard/orders/${row.id}`, "View order", {
+    fields: [
+      { label: "Order number", value: row.order_number },
+      { label: "Request number", value: row.request_number },
+      { label: "Beneficiary", value: row.beneficiary_data?.fullName },
+      { label: "Order total", value: formatMoney(row.amount_minor, row.currency) },
+      { label: "Status", value: statusLabel(nextStatus) },
+    ],
+    note: customerMessage,
+    noteLabel: nextStatus === "delivery_failed" ? "Delivery issue" : "Delivery update",
+  });
   return now;
 }
 
@@ -668,7 +716,7 @@ export default async function handler(req, res) {
       if (req.method === "POST" && path.length === 1) {
         const data = await readJson(req);
         const method = String(data.submissionMethod || data.method || "");
-        const beneficiaries = await sql`SELECT id FROM beneficiaries WHERE id=${data.beneficiaryId} AND owner_user_id=${user.id} AND archived=false`;
+        const beneficiaries = await sql`SELECT id, data FROM beneficiaries WHERE id=${data.beneficiaryId} AND owner_user_id=${user.id} AND archived=false`;
         if (!beneficiaries[0] || !data.accuracyConfirmed) return fail(res, 400, "Select a valid beneficiary and confirm the request details.");
         if (!["prescription", "medications", "description", "contact"].includes(method)) return fail(res, 400, "Choose a valid request method.");
         if (method === "medications" && (!Array.isArray(data.medications) || !data.medications.length || data.medications.some((item) => !String(item.medicationName || "").trim() || !String(item.quantity || "").trim()))) return fail(res, 400, "Enter a medication name and quantity for every item.");
@@ -686,7 +734,14 @@ export default async function handler(req, res) {
         await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${data.beneficiaryId}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
         if (fileReferences.length) await sql`UPDATE protected_files SET target_id=${id} WHERE owner_user_id=${user.id} AND kind='request' AND id = ANY(${fileReferences})`;
         await audit(user.id, "request.created", "medication_request", id, { ownerId: user.id });
-        await notify(user.id, "Request submitted", "Hakim Plus received your medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request");
+        await notify(user.id, "Request submitted", "Hakim Plus received your medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request", {
+          fields: [
+            { label: "Request number", value: requestNumber },
+            { label: "Beneficiary", value: beneficiaries[0].data?.fullName },
+            { label: "Submitted using", value: method.replaceAll("_", " ") },
+            { label: "Next step", value: "Pharmacy review" },
+          ],
+        });
         const row = await getRequestRow(id, user.id);
         return send(res, 201, { request: customerRequestFromRow(row) });
       }
@@ -771,13 +826,23 @@ export default async function handler(req, res) {
         await sql`INSERT INTO bank_transfers (id, request_id, quote_id, owner_user_id, transfer_number, amount_minor, currency, transfer_reference, transfer_date, blob_url, pathname, file_name, content_type) VALUES (${id}, ${requestId}, ${rows[0].id}, ${user.id}, ${transferNumber}, ${quote.grandTotalMinor}, ${quote.currency || 'ETB'}, ${String(body.transferReference || '').slice(0, 120)}, ${body.transferDate || null}, ${blob.url}, ${blob.pathname}, ${fileName}, ${parsed.contentType})`;
         await sql`UPDATE medication_requests SET status='payment_verification', updated_at=now() WHERE id=${requestId}`;
         await audit(user.id, "bank_transfer.submitted", "bank_transfer", id, { ownerId: user.id, requestId });
+        await notify(user.id, "Payment receipt received", "Your bank-transfer receipt was uploaded successfully and is awaiting verification.", "/dashboard/payments", "View payment status", {
+          fields: [
+            { label: "Transfer number", value: transferNumber },
+            { label: "Request number", value: rows[0].request_number },
+            { label: "Amount", value: formatMoney(quote.grandTotalMinor, quote.currency) },
+            { label: "Bank reference", value: String(body.transferReference || "Not provided") },
+            { label: "Transfer date", value: body.transferDate || "Not provided" },
+            { label: "Status", value: "Awaiting verification" },
+          ],
+        });
         return send(res, 201, { transfer: { id, transferNumber, status: "pending" } });
       }
     }
 
     if (path[0] === "quotes" && req.method === "POST") {
       const quoteId = path[1];
-      const rows = await sql`SELECT q.*, r.id request_id, r.owner_user_id FROM quotes q JOIN medication_requests r ON r.id=q.request_id WHERE q.id=${quoteId} AND r.owner_user_id=${user.id}`;
+      const rows = await sql`SELECT q.*, r.id request_id, r.owner_user_id, r.request_number, b.data beneficiary_data FROM quotes q JOIN medication_requests r ON r.id=q.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id WHERE q.id=${quoteId} AND r.owner_user_id=${user.id}`;
       if (!rows[0]) return fail(res, 404, "Quote not found.");
       if (path[2] === "approve") {
         if (!rows[0].data?.expiresAt || new Date(rows[0].data.expiresAt).getTime() <= Date.now()) return fail(res, 409, "This quote has expired. Ask Hakim Plus for an updated quote.");
@@ -786,7 +851,8 @@ export default async function handler(req, res) {
         const paymentEvent = { id: randomUUID(), status: "awaiting_payment", customerLabel: "Payment required", note: "Your quote is approved and payment is required.", createdAt: new Date().toISOString() };
         await sql`UPDATE medication_requests SET status='awaiting_payment', status_history=status_history || ${JSON.stringify([paymentEvent])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
         await audit(user.id, "quote.approved", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
-        await notify(user.id, "Payment required", "Your quote is approved. Complete the bank transfer and upload the receipt.", `/dashboard/requests/${rows[0].request_id}/payment`, "Pay now");
+        const approvedQuote = { ...quoteTotals(rows[0].data), quoteNumber: rows[0].quote_number };
+        await notify(user.id, "Payment required", "Your quote is approved. Complete the bank transfer and upload the receipt.", `/dashboard/requests/${rows[0].request_id}/payment`, "Pay now", quoteEmailDetails(approvedQuote, rows[0].request_number, rows[0].beneficiary_data?.fullName));
         return send(res, 200, { quote: { id: quoteId, status: "approved" }, paymentPath: `/dashboard/requests/${rows[0].request_id}/payment` });
       }
       const body = await readJson(req);
@@ -861,7 +927,14 @@ export default async function handler(req, res) {
         const history = [{ id: randomUUID(), status: "submitted", customerLabel: "Request submitted", note: `Requested again from ${row.order_number}.`, createdAt: new Date().toISOString() }];
         await sql`INSERT INTO medication_requests (id, owner_user_id, beneficiary_id, request_number, data, status_history) VALUES (${id}, ${user.id}, ${row.beneficiary_id}, ${requestNumber}, ${JSON.stringify(requestData)}::jsonb, ${JSON.stringify(history)}::jsonb)`;
         await audit(user.id, "order.requested_again", "order", row.id, { ownerId: user.id, newRequestId: id });
-        await notify(user.id, "Request submitted", "Hakim Plus received your repeat medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request");
+        await notify(user.id, "Request submitted", "Hakim Plus received your repeat medication request and the pharmacy will review it.", `/dashboard/requests/${id}`, "View request", {
+          fields: [
+            { label: "Request number", value: requestNumber },
+            { label: "Beneficiary", value: row.beneficiary_data?.fullName },
+            { label: "Previous order", value: row.order_number },
+            { label: "Next step", value: "Pharmacy review" },
+          ],
+        });
         return send(res, 201, { request: { id, publicId: id, requestNumber }, requestPath: `/dashboard/requests/${id}/confirmation` });
       }
     }
@@ -954,7 +1027,7 @@ export default async function handler(req, res) {
             return send(res, 200, { quote: { ...saved[0].data, id, quoteNumber: saved[0].quote_number, status: saved[0].status } });
           }
           if (req.method === "POST" && path[4] === "send") {
-            const quotes = await sql`SELECT id, status, data FROM quotes WHERE request_id=${requestId}`;
+            const quotes = await sql`SELECT id, status, data, quote_number FROM quotes WHERE request_id=${requestId}`;
             if (!quotes[0]) return fail(res, 409, "Save the quote before sending it.");
             if (quotes[0].status !== "draft") return fail(res, 409, "Only a saved draft quote can be sent.");
             if (!quotes[0].data?.expiresAt || new Date(quotes[0].data.expiresAt).getTime() <= Date.now()) return fail(res, 409, "Update the quote expiration before sending it.");
@@ -962,7 +1035,8 @@ export default async function handler(req, res) {
             const event = { id: randomUUID(), status: "quote_ready", customerLabel: "Quote ready", note: "Your pharmacy quote is ready to review.", createdAt: new Date().toISOString() };
             await sql`UPDATE medication_requests SET status='quote_ready', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
             await audit(user.id, "quote.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
-            await notify(row.owner_user_id, "Your quote is ready", "Review the itemized pharmacy quote before it expires.", `/dashboard/requests/${requestId}/quote`, "Review quote");
+            const sentQuote = { ...quoteTotals(quotes[0].data), quoteNumber: quotes[0].quote_number };
+            await notify(row.owner_user_id, "Your quote is ready", "The pharmacy has reviewed your request and prepared the quote below.", `/dashboard/requests/${requestId}/quote`, "Review quote", quoteEmailDetails(sentQuote, row.request_number, row.beneficiary_data?.fullName));
             return send(res, 200, { ok: true });
           }
         }
@@ -992,7 +1066,11 @@ export default async function handler(req, res) {
           const item = { id: randomUUID(), senderType: "staff", senderName: user.name || "Hakim Plus Pharmacy", message, author: { name: "Hakim Plus" }, createdAt: new Date().toISOString() };
           await sql`UPDATE medication_requests SET customer_messages=customer_messages || ${JSON.stringify([item])}::jsonb, updated_at=now() WHERE id=${requestId}`;
           await audit(user.id, "staff_message.sent", "medication_request", requestId, { ownerId: row.owner_user_id });
-          await notify(row.owner_user_id, "New message from Hakim Plus", "A staff member sent an update about your medication request.", `/dashboard/requests/${requestId}/messages`, "Read message");
+          await notify(row.owner_user_id, "New message from Hakim Plus", "A staff member sent an update about your medication request.", `/dashboard/requests/${requestId}/messages`, "Read message", {
+            fields: [{ label: "Request number", value: row.request_number }, { label: "Beneficiary", value: row.beneficiary_data?.fullName }],
+            note: message,
+            noteLabel: "Message preview",
+          });
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && ["cancel", "unable-to-fulfill", "request-information"].includes(path[3])) {
@@ -1008,7 +1086,11 @@ export default async function handler(req, res) {
             await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
           }
           await audit(user.id, `request.${path[3]}`, "medication_request", requestId, { ownerId: row.owner_user_id, reason: text.slice(0, 160) });
-          await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request");
+          await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request", {
+            fields: [{ label: "Request number", value: row.request_number }, { label: "Beneficiary", value: row.beneficiary_data?.fullName }, { label: "Status", value: statusLabel(status) }],
+            note: text,
+            noteLabel: path[3] === "request-information" ? "Information requested" : "Pharmacy update",
+          });
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "beneficiary-contact") {
@@ -1039,7 +1121,7 @@ export default async function handler(req, res) {
           return send(res, 200, { transfers: filtered.map((row) => ({ id: row.id, transferNumber: row.transfer_number, status: row.status, statusLabel: statusLabel(row.status), amountMinor: row.amount_minor, currency: row.currency, transferReference: row.transfer_reference, transferDate: row.transfer_date, requestNumber: row.request_number, beneficiaryName: row.beneficiary_data.fullName, customerName: row.customer_name, customerEmail: row.customer_email, createdAt: row.created_at, rejectionReason: row.rejection_reason })) });
         }
         const transferId = path[2];
-        const rows = await sql`SELECT t.*, q.data quote_data FROM bank_transfers t JOIN quotes q ON q.id=t.quote_id WHERE t.id=${transferId}`;
+        const rows = await sql`SELECT t.*, q.data quote_data, q.quote_number, r.request_number, b.data beneficiary_data FROM bank_transfers t JOIN quotes q ON q.id=t.quote_id JOIN medication_requests r ON r.id=t.request_id JOIN beneficiaries b ON b.id=r.beneficiary_id WHERE t.id=${transferId}`;
         if (!rows[0]) return fail(res, 404, "Transfer not found.");
         if (req.method === "GET" && path[3] === "receipt") {
           await audit(user.id, "bank_transfer.receipt_viewed", "bank_transfer", transferId);
@@ -1049,15 +1131,27 @@ export default async function handler(req, res) {
           const body = await readJson(req);
           const paymentId = randomUUID();
           const orderId = randomUUID();
+          const paymentNumber = numberCode("PAY");
+          const orderNumber = numberCode("ORD");
           const reviewed = await sql`UPDATE bank_transfers SET status='approved', reviewed_by=${user.id}, review_note=${String(body.note || '')}, reviewed_at=now() WHERE id=${transferId} AND status='pending' RETURNING id`;
           if (!reviewed[0]) return fail(res, 409, "Only a pending transfer can be approved.");
-          await sql`INSERT INTO payments (id, transfer_id, request_id, owner_user_id, payment_number, amount_minor, currency) VALUES (${paymentId}, ${transferId}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${numberCode('PAY')}, ${rows[0].amount_minor}, ${rows[0].currency}) ON CONFLICT (transfer_id) DO NOTHING`;
-          const payments = await sql`SELECT id FROM payments WHERE transfer_id=${transferId}`;
+          await sql`INSERT INTO payments (id, transfer_id, request_id, owner_user_id, payment_number, amount_minor, currency) VALUES (${paymentId}, ${transferId}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${paymentNumber}, ${rows[0].amount_minor}, ${rows[0].currency}) ON CONFLICT (transfer_id) DO NOTHING`;
+          const payments = await sql`SELECT id, payment_number FROM payments WHERE transfer_id=${transferId}`;
           const orderData = { items: rows[0].quote_data?.items || [], statusHistory: [{ id: randomUUID(), status: "payment_confirmed", customerLabel: "Payment confirmed", note: "Your bank transfer was verified.", createdAt: new Date().toISOString() }], internalTimeline: [{ id: randomUUID(), label: "Order created after payment verification", createdAt: new Date().toISOString(), actor: { name: user.name } }] };
-          await sql`INSERT INTO orders (id, payment_id, request_id, owner_user_id, order_number, data) VALUES (${orderId}, ${payments[0].id}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${numberCode('ORD')}, ${JSON.stringify(orderData)}::jsonb) ON CONFLICT (request_id) DO NOTHING`;
+          await sql`INSERT INTO orders (id, payment_id, request_id, owner_user_id, order_number, data) VALUES (${orderId}, ${payments[0].id}, ${rows[0].request_id}, ${rows[0].owner_user_id}, ${orderNumber}, ${JSON.stringify(orderData)}::jsonb) ON CONFLICT (request_id) DO NOTHING`;
           await sql`UPDATE medication_requests SET status='paid', updated_at=now() WHERE id=${rows[0].request_id}`;
           await audit(user.id, "bank_transfer.approved", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
-          await notify(rows[0].owner_user_id, "Payment confirmed", "Your bank transfer was verified and the pharmacy order was created.", "/dashboard/orders", "Track order");
+          await notify(rows[0].owner_user_id, "Payment confirmed", "Your bank transfer was verified and the pharmacy order was created.", "/dashboard/orders", "Track order", {
+            fields: [
+              { label: "Payment number", value: payments[0].payment_number },
+              { label: "Transfer number", value: rows[0].transfer_number },
+              { label: "Request number", value: rows[0].request_number },
+              { label: "Order number", value: orderNumber },
+              { label: "Beneficiary", value: rows[0].beneficiary_data?.fullName },
+              { label: "Amount confirmed", value: formatMoney(rows[0].amount_minor, rows[0].currency) },
+              { label: "Payment method", value: "Bank transfer" },
+            ],
+          });
           return send(res, 200, { ok: true, paymentId: payments[0].id });
         }
         if (req.method === "POST" && path[3] === "reject") {
@@ -1067,7 +1161,16 @@ export default async function handler(req, res) {
           if (!reviewed[0]) return fail(res, 409, "Only a pending transfer can be rejected.");
           await sql`UPDATE medication_requests SET status='awaiting_payment', updated_at=now() WHERE id=${rows[0].request_id}`;
           await audit(user.id, "bank_transfer.rejected", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
-          await notify(rows[0].owner_user_id, "Transfer receipt needs attention", String(body.reason).trim(), `/dashboard/requests/${rows[0].request_id}/payment`, "Resubmit receipt");
+          await notify(rows[0].owner_user_id, "Transfer receipt needs attention", String(body.reason).trim(), `/dashboard/requests/${rows[0].request_id}/payment`, "Resubmit receipt", {
+            fields: [
+              { label: "Transfer number", value: rows[0].transfer_number },
+              { label: "Request number", value: rows[0].request_number },
+              { label: "Amount", value: formatMoney(rows[0].amount_minor, rows[0].currency) },
+              { label: "Status", value: "Action required" },
+            ],
+            note: String(body.reason).trim(),
+            noteLabel: "Reason",
+          });
           return send(res, 200, { ok: true });
         }
       }

@@ -196,3 +196,15 @@ test("signup establishes a session when Neon does not require verification", asy
   assert.match(api, /copyAuthCookies\(signInUpstream, res\)/);
   assert.match(api, /const requiresVerification = !accountReady/);
 });
+
+test("transactional emails include event details without the removed reply warning", async () => {
+  const api = await source("api/v1/[...path].js");
+  assert.match(api, /function quoteEmailDetails/);
+  assert.match(api, /Quote number/);
+  assert.match(api, /Quote total/);
+  assert.match(api, /Message preview/);
+  assert.match(api, /Payment number/);
+  assert.match(api, /Order number/);
+  assert.match(api, /Payment receipt received/);
+  assert.doesNotMatch(api, /Do not send prescriptions or sensitive medical details by replying to this email/);
+});
