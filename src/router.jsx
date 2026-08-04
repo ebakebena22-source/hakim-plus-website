@@ -88,6 +88,8 @@ export default function SiteRouter() {
             <Route path="requests/:id/quote" element={<StaffRoute allowedRoles={["admin", "pharmacist"]}><AdminQuotePage /></StaffRoute>} />
             <Route path="orders" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrdersPage /></StaffRoute>} />
             <Route path="orders/:id" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrderDetailPage /></StaffRoute>} />
+            <Route path="completed-orders" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrdersPage completedOnly /></StaffRoute>} />
+            <Route path="completed-orders/:id" element={<StaffRoute allowedRoles={["admin", "pharmacist", "fulfillment", "delivery_operations"]}><AdminOrderDetailPage completedView /></StaffRoute>} />
             <Route path="bank-transfers" element={<StaffRoute allowedRoles={["admin", "pharmacist"]}><AdminTransfersPage /></StaffRoute>} />
             <Route path="analytics" element={<StaffRoute allowedRoles={["admin"]}><AdminAnalyticsPage /></StaffRoute>} />
             <Route path="audit-logs" element={<StaffRoute allowedRoles={["admin"]}><AuditLogPage /></StaffRoute>} />

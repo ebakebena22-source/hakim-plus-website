@@ -176,6 +176,48 @@ test("customer past orders and role-aware staff UI use the corrected flows", asy
   assert.match(quotePage, /defaultQuoteExpiry/);
 });
 
+test("completed orders have a separate read-only admin archive", async () => {
+  const layout = await source("src/layouts/AdminLayout.jsx");
+  const router = await source("src/router.jsx");
+  const ordersPage = await source("src/pages/AdminOrderPages.jsx");
+  const api = await source("api/v1/[...path].js");
+  assert.ok(layout.indexOf("Bank transfers") < layout.indexOf("Orders & delivery"));
+  assert.ok(layout.indexOf("Orders & delivery") < layout.indexOf("Completed orders"));
+  assert.match(router, /path="completed-orders"/);
+  assert.match(router, /<AdminOrdersPage completedOnly \/>/);
+  assert.match(router, /<AdminOrderDetailPage completedView \/>/);
+  assert.match(ordersPage, /navigate\(`\/admin\/completed-orders\/\$\{encodeURIComponent\(id\)\}`/);
+  assert.match(ordersPage, /This order is archived as read-only, so delivery cannot be submitted again/);
+  assert.doesNotMatch(ordersPage.slice(ordersPage.indexOf("operationalQueues"), ordersPage.indexOf("function formatDate")), /completed/);
+  assert.match(api, /queue === "active"[^\n]+!\["completed", "delivered", "cancelled"\]/);
+  assert.match(api, /queue === "completed"[^\n]+\["completed", "delivered"\]\.includes/);
+});
+
+test("Google social sign-in clears stale sessions and always uses the selected account", async () => {
+  const api = await source("api/v1/[...path].js");
+  const socialStart = api.slice(api.indexOf('if (action === "social"'), api.indexOf('if (action === "social-complete"'));
+  const socialComplete = api.slice(api.indexOf('if (action === "social-complete"'), api.indexOf('if (action === "session"'));
+  assert.match(socialStart, /callAuth\(req, "\/sign-out", \{ method: "POST" \}\)/);
+  assert.ok(socialStart.indexOf('"/sign-out"') < socialStart.indexOf('"/sign-in/social"'));
+  assert.match(socialStart, /searchParams\.set\("prompt", "select_account"\)/);
+  assert.match(socialComplete, /\{ forwardCookies: false \}/);
+  assert.match(api, /res\.setHeader\("Set-Cookie", \[\.\.\.current, \.\.\.cookies\.map\(normalizeCookie\)\]\)/);
+});
+
+test("payment confirmation and dispatch use one combined customer email", async () => {
+  const api = await source("api/v1/[...path].js");
+  const transfers = await source("src/pages/AdminTransfersPage.jsx");
+  const orders = await source("src/pages/AdminOrderPages.jsx");
+  const approval = api.slice(api.indexOf('path[3] === "approve"'), api.indexOf('path[3] === "reject"'));
+  const dispatch = api.slice(api.indexOf('path[3] === "dispatch"'), api.indexOf('path[3] === "delivery-confirmation"'));
+  assert.match(approval, /sendEmail: false/);
+  assert.match(dispatch, /subject: "Payment received and order dispatched"/);
+  assert.match(dispatch, /label: "Payment number"/);
+  assert.match(dispatch, /label: "Order number"/);
+  assert.match(transfers, /combined payment-received\/order-dispatched email will be sent when the order is dispatched/);
+  assert.match(orders, /send the combined payment-received\/order-dispatched email/);
+});
+
 test("security overview excludes ordinary fulfillment failures", async () => {
   const api = await source("api/v1/[...path].js");
   assert.match(api, /event_type LIKE 'auth\.%'/);
@@ -224,7 +266,7 @@ test("admin actions confirm before triggering customer email", async () => {
     "Cancel this medication request and email the customer?",
   ]) assert.ok(requestPage.includes(`window.confirm("${prompt}")`), `missing confirmation: ${prompt}`);
   assert.match(quotePage, /window\.confirm\("Send this quote and an email to the customer\?/);
-  assert.match(transferPage, /creates the fulfillment order and emails the customer/);
+  assert.match(transferPage, /creates the fulfillment order/);
   assert.match(transferPage, /Reject this transfer and email the reason to the customer/);
-  for (const prompt of ["mark this order completed, and email the customer", "out for delivery and email the customer", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
+  for (const prompt of ["mark this order completed, and email the customer", "send the combined payment-received/order-dispatched email", "delivery failure and email the customer"]) assert.ok(orderPage.includes(prompt), `missing order email confirmation: ${prompt}`);
 });

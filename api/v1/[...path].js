@@ -51,7 +51,11 @@ function copyAuthCookies(upstream, res) {
   const cookies = typeof upstream.headers.getSetCookie === "function"
     ? upstream.headers.getSetCookie()
     : upstream.headers.get("set-cookie") ? [upstream.headers.get("set-cookie")] : [];
-  if (cookies.length) res.setHeader("Set-Cookie", cookies.map(normalizeCookie));
+  if (cookies.length) {
+    const existing = res.getHeader("Set-Cookie");
+    const current = Array.isArray(existing) ? existing : existing ? [existing] : [];
+    res.setHeader("Set-Cookie", [...current, ...cookies.map(normalizeCookie)]);
+  }
 }
 
 function authBaseUrl() {
@@ -83,7 +87,7 @@ async function callAuth(req, endpoint, options = {}) {
     throw Object.assign(new Error("This request origin is not allowed."), { status: 403 });
   }
   const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) };
-  if (req.headers.cookie) headers.Cookie = req.headers.cookie;
+  if (options.forwardCookies !== false && req.headers.cookie) headers.Cookie = req.headers.cookie;
   if (req.headers.referer) headers.Referer = req.headers.referer;
   if (req.headers["user-agent"]) headers["User-Agent"] = req.headers["user-agent"];
   headers.Origin = origin;
@@ -152,18 +156,22 @@ async function handleAuth(req, res, action) {
     const provider = String(form.provider || "").toLowerCase();
     if (provider !== "google") return fail(res, 400, "Google is the only supported social sign-in provider.");
     const callbackURL = "https://hakimpluspharmacy.com/auth/social-complete";
+    const signOutUpstream = await callAuth(req, "/sign-out", { method: "POST" });
+    copyAuthCookies(signOutUpstream, res);
     const upstream = await callAuth(req, "/sign-in/social", { method: "POST", body: { provider, callbackURL, errorCallbackURL: `${callbackURL}?error=oauth` } });
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "Google sign-in is temporarily unavailable.");
     const redirectUrl = payload.url || upstream.headers.get("location");
     if (!redirectUrl) return fail(res, 502, "The account service did not return a social sign-in URL.");
-    return send(res, 200, { url: redirectUrl, provider });
+    const googleUrl = new URL(redirectUrl);
+    if (googleUrl.hostname === "accounts.google.com") googleUrl.searchParams.set("prompt", "select_account");
+    return send(res, 200, { url: googleUrl.toString(), provider });
   }
   if (action === "social-complete" && method === "GET") {
     const verifier = new URL(req.url, "https://hakimpluspharmacy.com").searchParams.get("verifier") || "";
     if (!/^[A-Za-z0-9_-]{8,2048}$/.test(verifier)) return fail(res, 400, "The Google sign-in verifier is missing or invalid.");
-    const upstream = await callAuth(req, `/get-session?neon_auth_session_verifier=${encodeURIComponent(verifier)}`);
+    const upstream = await callAuth(req, `/get-session?neon_auth_session_verifier=${encodeURIComponent(verifier)}`, { forwardCookies: false });
     copyAuthCookies(upstream, res);
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok || !payload.user?.id) return fail(res, 401, payload.message || "Google sign-in could not create a Hakim Plus session. Please try again.");
@@ -608,20 +616,21 @@ async function getOrderRow(id, ownerId) {
   return rows[0];
 }
 
-async function saveOrderState(row, nextStatus, data, actorId, eventType, customerTitle, customerMessage) {
+async function saveOrderState(row, nextStatus, data, actorId, eventType, customerTitle, customerMessage, emailDetails = {}) {
   const now = new Date().toISOString();
   const ownerId = row.owner_user_id;
   await sql`UPDATE orders SET status=${nextStatus}, data=${JSON.stringify(data)}::jsonb, updated_at=now() WHERE id=${row.id}`;
   await audit(actorId, eventType, "order", row.id, { ownerId, status: nextStatus });
   if (customerTitle) await notify(ownerId, customerTitle, customerMessage || statusLabel(nextStatus), `/dashboard/orders/${row.id}`, "View order", {
-    fields: [
+    ...emailDetails,
+    fields: emailDetails.fields || [
       { label: "Order number", value: row.order_number },
       { label: "Beneficiary", value: row.beneficiary_data?.fullName },
       { label: "Order total", value: formatMoney(row.amount_minor, row.currency) },
       { label: "Status", value: statusLabel(nextStatus) },
     ],
-    note: customerMessage,
-    noteLabel: nextStatus === "delivery_failed" ? "Delivery issue" : "Delivery update",
+    note: emailDetails.note ?? customerMessage,
+    noteLabel: emailDetails.noteLabel || (nextStatus === "delivery_failed" ? "Delivery issue" : "Delivery update"),
   });
   return now;
 }
@@ -1134,6 +1143,7 @@ export default async function handler(req, res) {
           await sql`UPDATE medication_requests SET status='paid', updated_at=now() WHERE id=${rows[0].request_id}`;
           await audit(user.id, "bank_transfer.approved", "bank_transfer", transferId, { ownerId: rows[0].owner_user_id, requestId: rows[0].request_id });
           await notify(rows[0].owner_user_id, "Payment confirmed", "Your bank transfer was verified and the pharmacy order was created.", "/dashboard/orders", "Track order", {
+            sendEmail: false,
             fields: [
               { label: "Payment number", value: payments[0].payment_number },
               { label: "Order number", value: orderNumber },
@@ -1170,7 +1180,7 @@ export default async function handler(req, res) {
           const queue = url.searchParams.get("queue") || "active";
           const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
           if (queue === "active") orders = orders.filter((order) => !["completed", "delivered", "cancelled"].includes(order.status));
-          else if (queue === "completed") orders = orders.filter((order) => order.status === "completed");
+          else if (queue === "completed") orders = orders.filter((order) => ["completed", "delivered"].includes(order.status));
           else if (queue) orders = orders.filter((order) => order.status === queue);
           if (search) orders = orders.filter((order) => JSON.stringify(order).toLowerCase().includes(search));
           return send(res, 200, { orders });
@@ -1213,7 +1223,18 @@ export default async function handler(req, res) {
           const data = { ...(row.data || {}), deliveryStatusLabel: "Out for delivery", dispatchedAt: now };
           data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "out_for_delivery", customerLabel: "Out for delivery", note, createdAt: now }];
           data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Order dispatched", createdAt: now, actor: { name: user.name } }];
-          await saveOrderState(row, "out_for_delivery", data, user.id, "order.dispatched", "Order dispatched", note);
+          await saveOrderState(row, "out_for_delivery", data, user.id, "order.dispatched", "Order dispatched", "Payment received and your order is out for delivery.", {
+            subject: "Payment received and order dispatched",
+            fields: [
+              { label: "Payment number", value: row.payment_number },
+              { label: "Order number", value: row.order_number },
+              { label: "Beneficiary", value: row.beneficiary_data?.fullName },
+              { label: "Amount received", value: formatMoney(row.amount_minor, row.currency) },
+              { label: "Delivery status", value: "Out for delivery" },
+            ],
+            note,
+            noteLabel: "Dispatch update",
+          });
           return send(res, 200, { ok: true });
         }
         if (req.method === "POST" && path[3] === "delivery-confirmation") {

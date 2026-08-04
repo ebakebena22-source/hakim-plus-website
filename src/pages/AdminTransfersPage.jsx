@@ -21,7 +21,7 @@ export default function AdminTransfersPage() {
   useEffect(() => { load(); }, [load]);
 
   async function approve(transfer) {
-    if (!window.confirm(`Confirm that ${formatMinorAmount(transfer.amountMinor, transfer.currency)} was received? This creates the fulfillment order and emails the customer.`)) return;
+    if (!window.confirm(`Confirm that ${formatMinorAmount(transfer.amountMinor, transfer.currency)} was received? This creates the fulfillment order. The combined payment-received/order-dispatched email will be sent when the order is dispatched.`)) return;
     try { await adminTransfersApi.approve(transfer.id); setState((current) => ({ ...current, message: "Transfer approved and fulfillment order created." })); await load(); }
     catch (error) { setState((current) => ({ ...current, error: error.message })); }
   }
