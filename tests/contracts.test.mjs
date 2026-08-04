@@ -46,6 +46,18 @@ test("Vercel Web Analytics is mounted once at the application root", async () =>
   assert.equal((main.match(/<Analytics\s*\/>/g) || []).length, 1);
 });
 
+test("the supplied Hakim Plus mark is used for site branding and the browser icon", async () => {
+  const html = await source("index.html");
+  const brand = await source("src/components/BrandLogo.jsx");
+  const authShell = await source("src/components/AuthShell.jsx");
+  const landing = await source("src/App.jsx");
+  const admin = await source("src/layouts/AdminLayout.jsx");
+  assert.match(html, /rel="icon"[^>]+hakim-plus-logo\.png/);
+  assert.match(html, /rel="apple-touch-icon"[^>]+hakim-plus-logo\.png/);
+  assert.match(brand, /\/hakim-plus-logo\.png/);
+  for (const shell of [authShell, landing, admin]) assert.match(shell, /BrandLogo/);
+});
+
 test("client analytics accepts only explicitly safe context", async () => {
   const analytics = await source("src/analytics/safeEvents.js");
   assert.match(analytics, /allowedEvents/);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import BrandLogo from "./components/BrandLogo";
 
 function Icon({ name, size = 22, className = "" }) {
   const common = {
@@ -479,9 +480,7 @@ export default function DiasporaPharmacyLandingPage() {
       <nav className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-600 text-white">
-              <Icon name="pill" />
-            </div>
+            <BrandLogo className="h-10 w-10 rounded-xl shadow-md shadow-emerald-950/10" />
             <div>
               <p className="text-sm font-bold leading-none">Hakim Plus</p>
               <p className="text-xs text-slate-500">Diaspora Care</p>
@@ -967,7 +966,7 @@ export default function DiasporaPharmacyLandingPage() {
 
       <footer className="border-t border-slate-200 bg-white px-5 py-8">
         <div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 text-sm text-slate-500 md:flex-row">
-          <p>© 2026 Hakim Plus Pharmacy. Diaspora Care Service.</p>
+          <div className="flex items-center gap-3"><BrandLogo className="h-9 w-9 rounded-xl" /><p>© 2026 Hakim Plus Pharmacy. Diaspora Care Service.</p></div>
           <div className="flex flex-col items-start gap-2 md:items-end">
             <nav className="flex gap-4" aria-label="Legal"><a className="font-semibold hover:text-emerald-700" href="/terms">Terms of Use</a><a className="font-semibold hover:text-emerald-700" href="/privacy">Privacy Policy</a></nav>
             <p>Medicine verification · Payment request · Delivery proof</p>

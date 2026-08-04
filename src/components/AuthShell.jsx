@@ -1,11 +1,10 @@
 import { Link } from "react-router-dom";
+import BrandLogo from "./BrandLogo";
 
 export function Brand({ compact = false }) {
   return (
     <Link to="/" className="inline-flex items-center gap-3 text-slate-950" aria-label="Hakim Plus home">
-      <span className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-600 text-xl text-white shadow-lg shadow-emerald-600/20" aria-hidden="true">
-        +
-      </span>
+      <BrandLogo className="h-11 w-11 rounded-2xl shadow-lg shadow-emerald-900/15" />
       {!compact && (
         <span>
           <span className="block text-sm font-extrabold leading-none">Hakim Plus</span>
