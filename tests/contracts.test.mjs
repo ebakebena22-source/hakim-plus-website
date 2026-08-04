@@ -58,6 +58,21 @@ test("the supplied Hakim Plus mark is used for site branding and the browser ico
   for (const shell of [authShell, landing, admin]) assert.match(shell, /BrandLogo/);
 });
 
+test("supplied Google and context-aware WhatsApp icons replace placeholder marks", async () => {
+  const icons = await source("src/components/SocialIcons.jsx");
+  const auth = await source("src/pages/AuthPages.jsx");
+  const landing = await source("src/App.jsx");
+  const portal = await source("src/pages/PortalPages.jsx");
+  assert.match(icons, /google-icon\.png/);
+  assert.match(icons, /whatsapp-green\.png/);
+  assert.match(icons, /whatsapp-white\.png/);
+  assert.match(auth, /<GoogleIcon\s*\/>/);
+  assert.doesNotMatch(auth, />G<\/span>/);
+  assert.match(landing, /WhatsAppIcon variant="white"/);
+  assert.match(landing, /<WhatsAppIcon className=/);
+  assert.match(portal, /WhatsAppIcon variant="white"/);
+});
+
 test("client analytics accepts only explicitly safe context", async () => {
   const analytics = await source("src/analytics/safeEvents.js");
   assert.match(analytics, /allowedEvents/);

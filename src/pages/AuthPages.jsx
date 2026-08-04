@@ -5,6 +5,7 @@ import { authClient } from "../auth/authClient";
 import { AuthShell, ConfigurationNotice, Field, LocalPreviewNotice, primaryButtonClass } from "../components/AuthShell";
 import CountryPicker from "../components/CountryPicker";
 import { emailError, phoneError } from "../validation/contact";
+import { GoogleIcon } from "../components/SocialIcons";
 
 function FormError({ message }) {
   if (!message) return null;
@@ -26,7 +27,7 @@ function SocialAuthButtons({ disabled = false, onError }) {
     }
   }
 
-  return <button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || busy} onClick={continueWithGoogle}><span className="text-base font-black text-blue-600" aria-hidden="true">G</span>{busy ? "Connecting…" : "Continue with Google"}</button>;
+  return <button className="inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100" type="button" disabled={disabled || busy} onClick={continueWithGoogle}><GoogleIcon />{busy ? "Connecting…" : "Continue with Google"}</button>;
 }
 
 function AuthDivider() {

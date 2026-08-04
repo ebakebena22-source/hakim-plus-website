@@ -10,6 +10,7 @@ import { Field } from "../components/AuthShell";
 import CountryPicker from "../components/CountryPicker";
 import { profileCountry } from "../profile/countries";
 import { phoneError } from "../validation/contact";
+import { WhatsAppIcon } from "../components/SocialIcons";
 
 const pagePadding = "px-5 py-8 sm:px-8 lg:px-10 lg:py-10";
 
@@ -80,7 +81,7 @@ export function ProfilePage() {
 }
 
 export function HelpPage() {
-  return <main className={pagePadding}><p className="text-sm font-bold text-emerald-700">Support</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">How can we help?</h1><div className="mt-8 grid gap-5 md:grid-cols-2"><section className="rounded-[2rem] border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold">How medication requests work</h2><p className="mt-3 text-sm leading-6 text-slate-600">Hakim Plus reviews your request, confirms availability and pricing, then sends a quote. You pay only after approval.</p></section><section className="rounded-[2rem] border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold">Contact Hakim Plus</h2><p className="mt-3 text-sm leading-6 text-slate-600">For general support, contact Hakim Plus on WhatsApp. Do not send prescriptions or sensitive medical details through unsecured channels.</p><a className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white" href="https://wa.me/251971818802" target="_blank" rel="noreferrer">Open WhatsApp</a></section></div></main>;
+  return <main className={pagePadding}><p className="text-sm font-bold text-emerald-700">Support</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">How can we help?</h1><div className="mt-8 grid gap-5 md:grid-cols-2"><section className="rounded-[2rem] border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold">How medication requests work</h2><p className="mt-3 text-sm leading-6 text-slate-600">Hakim Plus reviews your request, confirms availability and pricing, then sends a quote. You pay only after approval.</p></section><section className="rounded-[2rem] border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold">Contact Hakim Plus</h2><p className="mt-3 text-sm leading-6 text-slate-600">For general support, contact Hakim Plus on WhatsApp. Do not send prescriptions or sensitive medical details through unsecured channels.</p><a className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white" href="https://wa.me/251971818802" target="_blank" rel="noreferrer"><WhatsAppIcon variant="white" />Open WhatsApp</a></section></div></main>;
 }
 
 export function OnboardingPage() {

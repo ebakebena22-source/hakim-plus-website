@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import BrandLogo from "./components/BrandLogo";
+import { WhatsAppIcon } from "./components/SocialIcons";
 
 function Icon({ name, size = 22, className = "" }) {
   const common = {
@@ -505,7 +506,7 @@ export default function DiasporaPharmacyLandingPage() {
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 md:hidden"
             aria-label="Open WhatsApp"
           >
-            <Icon name="chat" size={19} />
+            <WhatsAppIcon variant="white" className="h-5 w-5" />
           </a>
         </div>
       </nav>
@@ -535,7 +536,7 @@ export default function DiasporaPharmacyLandingPage() {
               <Button href="/signup">Create your account <Icon name="arrow" size={18} /></Button>
               <Button href="#how" variant="secondary">See how it works</Button>
               <Button href={whatsappUrl} external variant="secondary">
-                WhatsApp (+251971818802) <Icon name="chat" size={18} />
+                WhatsApp (+251971818802) <WhatsAppIcon className="h-[18px] w-[18px]" />
               </Button>
             </div>
             <div className="mt-7 border-t border-slate-200 pt-5">
@@ -821,14 +822,14 @@ export default function DiasporaPharmacyLandingPage() {
             </div>
             <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-emerald-400/15 p-2 text-emerald-300"><Icon name="phone" size={18} /></div>
+                <div className="rounded-xl bg-emerald-400/15 p-2"><WhatsAppIcon variant="white" className="h-[18px] w-[18px]" /></div>
                 <div>
                   <p className="text-xs text-slate-400">Direct WhatsApp</p>
                   <p className="text-sm font-semibold text-white">+251-971-81-8802</p>
                 </div>
               </div>
               <Button href={whatsappUrl} external className="mt-4 w-full">
-                Chat on WhatsApp <Icon name="chat" size={18} />
+                Chat on WhatsApp <WhatsAppIcon variant="white" className="h-[18px] w-[18px]" />
               </Button>
             </div>
           </div>
@@ -947,7 +948,7 @@ export default function DiasporaPharmacyLandingPage() {
               </div>
             </div>
             <Button href={whatsappUrl} external className="mt-8 w-full" variant="secondary">
-              WhatsApp (+251971818802) <Icon name="chat" size={18} />
+              WhatsApp (+251971818802) <WhatsAppIcon className="h-[18px] w-[18px]" />
             </Button>
           </motion.div>
           <motion.div className="grid gap-4" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }} variants={staggerGroup}>
