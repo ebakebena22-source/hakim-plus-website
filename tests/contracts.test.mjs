@@ -196,13 +196,12 @@ test("completed orders have a separate read-only admin archive", async () => {
   assert.match(api, /queue === "completed"[^\n]+\["completed", "delivered"\]\.includes/);
 });
 
-test("Google social sign-in clears stale sessions and always uses the selected account", async () => {
+test("Google social sign-in cannot reuse the previous Hakim Plus session", async () => {
   const api = await source("api/v1/[...path].js");
   const socialStart = api.slice(api.indexOf('if (action === "social"'), api.indexOf('if (action === "social-complete"'));
   const socialComplete = api.slice(api.indexOf('if (action === "social-complete"'), api.indexOf('if (action === "session"'));
   assert.match(socialStart, /callAuth\(req, "\/sign-out", \{ method: "POST" \}\)/);
   assert.ok(socialStart.indexOf('"/sign-out"') < socialStart.indexOf('"/sign-in/social"'));
-  assert.match(socialStart, /searchParams\.set\("prompt", "select_account"\)/);
   assert.match(socialComplete, /\{ forwardCookies: false \}/);
   assert.match(api, /res\.setHeader\("Set-Cookie", \[\.\.\.current, \.\.\.cookies\.map\(normalizeCookie\)\]\)/);
 });

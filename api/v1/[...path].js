@@ -164,9 +164,7 @@ async function handleAuth(req, res, action) {
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "Google sign-in is temporarily unavailable.");
     const redirectUrl = payload.url || upstream.headers.get("location");
     if (!redirectUrl) return fail(res, 502, "The account service did not return a social sign-in URL.");
-    const googleUrl = new URL(redirectUrl);
-    if (googleUrl.hostname === "accounts.google.com") googleUrl.searchParams.set("prompt", "select_account");
-    return send(res, 200, { url: googleUrl.toString(), provider });
+    return send(res, 200, { url: redirectUrl, provider });
   }
   if (action === "social-complete" && method === "GET") {
     const verifier = new URL(req.url, "https://hakimpluspharmacy.com").searchParams.get("verifier") || "";
