@@ -12,7 +12,7 @@ const metricDefinitions = [
   ["awaitingApproval", "Awaiting customer approval", "/admin/requests?queue=awaiting_approval", "requests"],
   ["paymentsReceived", "Payments received", "/admin/orders?queue=active", "orders"],
   ["outForDelivery", "Out for delivery", "/admin/orders?queue=out_for_delivery", "orders"],
-  ["completedOrders", "Completed", "/admin/orders?queue=completed", "orders"],
+  ["completedOrders", "Completed", "/admin/completed-orders", "orders"],
   ["deliveryFailed", "Delivery failed", "/admin/orders?queue=delivery_failed", "orders"],
 ];
 

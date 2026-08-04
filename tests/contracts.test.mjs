@@ -180,12 +180,15 @@ test("completed orders have a separate read-only admin archive", async () => {
   const layout = await source("src/layouts/AdminLayout.jsx");
   const router = await source("src/router.jsx");
   const ordersPage = await source("src/pages/AdminOrderPages.jsx");
+  const dashboard = await source("src/pages/AdminDashboardPage.jsx");
   const api = await source("api/v1/[...path].js");
   assert.ok(layout.indexOf("Bank transfers") < layout.indexOf("Orders & delivery"));
   assert.ok(layout.indexOf("Orders & delivery") < layout.indexOf("Completed orders"));
   assert.match(router, /path="completed-orders"/);
   assert.match(router, /<AdminOrdersPage completedOnly \/>/);
   assert.match(router, /<AdminOrderDetailPage completedView \/>/);
+  assert.match(dashboard, /\["completedOrders", "Completed", "\/admin\/completed-orders"/);
+  assert.doesNotMatch(dashboard, /queue=completed/);
   assert.match(ordersPage, /navigate\(`\/admin\/completed-orders\/\$\{encodeURIComponent\(id\)\}`/);
   assert.match(ordersPage, /This order is archived as read-only, so delivery cannot be submitted again/);
   assert.doesNotMatch(ordersPage.slice(ordersPage.indexOf("operationalQueues"), ordersPage.indexOf("function formatDate")), /completed/);
