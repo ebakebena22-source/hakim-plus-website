@@ -974,19 +974,16 @@ export default async function handler(req, res) {
       if (path[1] === "requests") {
         if (!requireRole(user, res, ["admin", "pharmacist", "customer_support"])) return;
         if (req.method === "GET" && path.length === 2) {
-          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id ORDER BY r.created_at DESC`;
+          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE o.id IS NULL OR o.status NOT IN ('completed','delivered') ORDER BY r.created_at DESC`;
           let requests = rows.map((row) => staffRequestFromRow(row, user));
           const queue = url.searchParams.get("queue");
           const search = String(url.searchParams.get("search") || "").toLowerCase();
           const queueStatuses = {
-            new: ["submitted"],
-            awaiting_review: ["under_review", "under_pharmacy_review"],
-            beneficiary_contact: ["contacting_beneficiary"],
-            awaiting_quote: ["checking_availability", "prescription_verification"],
-            needs_information: ["awaiting_information", "additional_information_required"],
+            new: ["submitted", "under_review", "under_pharmacy_review"],
           };
           if (queueStatuses[queue]) requests = requests.filter((item) => queueStatuses[queue].includes(item.status));
-          else if (queue && !["all", "overdue", "urgent"].includes(queue)) requests = requests.filter((item) => item.status === queue);
+          if (queue === "beneficiary_contacted") requests = requests.filter((item) => item.internalNotes?.some((note) => note.kind === "beneficiary_contact"));
+          if (queue === "quote_generated") requests = requests.filter((item) => Boolean(item.quote));
           if (queue === "urgent") requests = requests.filter((item) => item.urgent);
           if (queue === "overdue") requests = requests.filter((item) => item.overdue);
           if (search) requests = requests.filter((item) => JSON.stringify(item).toLowerCase().includes(search));

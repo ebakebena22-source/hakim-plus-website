@@ -21,8 +21,6 @@ export const adminApi = {
     apiRequest(`/api/v1/admin/requests/${encodeId(id)}/customer-messages`, { method: "POST", body: JSON.stringify({ message }) }),
   recordBeneficiaryContact: (id, payload) =>
     apiRequest(`/api/v1/admin/requests/${encodeId(id)}/beneficiary-contact`, { method: "POST", body: JSON.stringify(payload) }),
-  requestInformation: (id, payload) =>
-    apiRequest(`/api/v1/admin/requests/${encodeId(id)}/request-information`, { method: "POST", body: JSON.stringify(payload) }),
   cancelRequest: (id, reason) =>
     apiRequest(`/api/v1/admin/requests/${encodeId(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }),
   markUnableToFulfill: (id, reason) =>

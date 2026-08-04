@@ -214,6 +214,21 @@ test("operations dashboard and navigation share four authoritative queue counts"
   assert.match(layout, /setInterval\(loadActionCounts, 30000\)/);
 });
 
+test("medication requests use five simplified queues and exclude completed deliveries", async () => {
+  const api = await source("api/v1/[...path].js");
+  const page = await source("src/pages/AdminRequestPages.jsx");
+  const adminClient = await source("src/api/admin.js");
+  assert.match(page, /const queueOptions = \[\["new","New"\],\["beneficiary_contacted","Beneficiary contacted"\],\["quote_generated","Quote generated"\],\["urgent","Urgent"\],\["overdue","Overdue"\]\]/);
+  assert.match(page, /searchParams\.get\("queue"\) \|\| "new"/);
+  assert.doesNotMatch(page, /\["all","All"\]|\["awaiting_review","Awaiting review"\]|\["needs_information","Needs information"\]/);
+  assert.match(api, /new: \["submitted", "under_review", "under_pharmacy_review"\]/);
+  assert.match(api, /queue === "beneficiary_contacted"[^\n]+note\.kind === "beneficiary_contact"/);
+  assert.match(api, /queue === "quote_generated"[^\n]+Boolean\(item\.quote\)/);
+  assert.match(api, /WHERE o\.id IS NULL OR o\.status NOT IN \('completed','delivered'\)/);
+  assert.doesNotMatch(page, /Request information|informationForm|requestInformation/);
+  assert.doesNotMatch(adminClient, /requestInformation/);
+});
+
 test("Google social sign-in cannot reuse the previous Hakim Plus session", async () => {
   const api = await source("api/v1/[...path].js");
   const socialStart = api.slice(api.indexOf('if (action === "social"'), api.indexOf('if (action === "social-complete"'));
@@ -281,7 +296,6 @@ test("admin actions confirm before triggering customer email", async () => {
   const orderPage = await source("src/pages/AdminOrderPages.jsx");
   for (const prompt of [
     "Send this message and an email preview to the customer?",
-    "Send this information request and an email to the customer?",
     "Mark this request unable to fulfill and email the customer?",
     "Cancel this medication request and email the customer?",
   ]) assert.ok(requestPage.includes(`window.confirm("${prompt}")`), `missing confirmation: ${prompt}`);
