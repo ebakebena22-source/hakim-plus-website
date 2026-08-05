@@ -188,12 +188,17 @@ async function handleAuth(req, res, action) {
   }
   if (action === "forgot-password" && method === "POST") {
     const form = await readJson(req);
-    await callAuth(req, "/forget-password", { method: "POST", body: { email: String(form.email || "").trim().toLowerCase(), redirectTo: "https://hakimpluspharmacy.com/reset-password" } });
+    const email = normalizeEmail(form.email);
+    if (emailError(email)) return fail(res, 400, "Enter a valid email address.");
+    const upstream = await callAuth(req, "/request-password-reset", { method: "POST", body: { email, redirectTo: `${APP_URL}/reset-password` } });
+    if (!upstream.ok) return fail(res, 502, "The reset email could not be sent. Please try again.");
     return send(res, 200, { ok: true });
   }
   if (action === "reset-password" && method === "POST") {
     const form = await readJson(req);
-    const upstream = await callAuth(req, "/reset-password", { method: "POST", body: { token: form.token, newPassword: form.password } });
+    const token = String(form.token || "").trim();
+    if (!token || String(form.password || "").length < 12) return fail(res, 400, "Use a valid reset link and a password with at least 12 characters.");
+    const upstream = await callAuth(req, "/reset-password", { method: "POST", body: { token, newPassword: form.password } });
     const payload = authPayload(await upstream.json().catch(() => ({})));
     if (!upstream.ok) return fail(res, upstream.status, payload.message || "The reset link is invalid or expired.");
     return send(res, 200, { ok: true });
@@ -341,19 +346,40 @@ function requestFromRow(row) {
   const terminal = ["delivered", "completed", "cancelled", "unable_to_fulfill"].includes(row.status);
   const updatedAt = new Date(row.updated_at || row.created_at).getTime();
   const profileCurrency = row.customer_profile?.currency || normalizedCountryProfile(row.customer_profile)?.currency || "USD";
-  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), currency: profileCurrency, beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name, country: row.customer_profile?.countryName || row.customer_profile?.country, currency: profileCurrency } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment"].includes(row.status), urgent: Boolean(data.urgent), overdue: !terminal && Number.isFinite(updatedAt) && Date.now() - updatedAt > 24 * 60 * 60 * 1000, latestUpdate: history.at(-1)?.note, quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
+  return { ...data, id: row.id, publicId: row.id, requestNumber: row.request_number, status: row.status, statusLabel: statusLabel(row.status), currency: profileCurrency, beneficiary: row.beneficiary_data ? { ...row.beneficiary_data, id: row.beneficiary_id } : undefined, beneficiaryName: row.beneficiary_data?.fullName, customer: row.customer_email ? { email: row.customer_email, fullName: row.customer_name, country: row.customer_profile?.countryName || row.customer_profile?.country, currency: profileCurrency } : undefined, customerName: row.customer_name, submittedAt: row.created_at, createdAt: row.created_at, updatedAt: row.updated_at, statusHistory: history, internalNotes: row.internal_notes || [], customerMessages: row.customer_messages || [], medicationCount: data.medications?.length || 0, actionRequired: ["quote_ready", "awaiting_payment"].includes(row.status), urgent: Boolean(data.urgent), overdue: !terminal && Number.isFinite(updatedAt) && Date.now() - updatedAt > 24 * 60 * 60 * 1000, latestUpdate: history.at(-1)?.note, cancelledByCustomer: Boolean(row.cancelled_by_customer), quote: row.quote_id ? { id: row.quote_id, status: row.quote_status } : undefined, order: row.order_id ? { id: row.order_id, publicId: row.order_id, status: row.order_status } : undefined, orderPath: row.order_id ? `/dashboard/orders/${row.order_id}` : undefined };
+}
+
+function customerRequestUpdate(internalStatus, orderStatus, statusHistory, cancelledByCustomer) {
+  const latestNote = statusHistory.at(-1)?.note;
+  if (["completed", "delivered"].includes(internalStatus) || ["completed", "delivered"].includes(orderStatus)) return "Your request is complete and the order has been delivered.";
+  if (cancelledByCustomer) return "Order cancelled by customer";
+  if (internalStatus === "cancelled") return latestNote || "This request was cancelled.";
+  if (internalStatus === "unable_to_fulfill") return latestNote || "Hakim Plus could not fulfill this request. Contact support if you need help.";
+  if (orderStatus === "out_for_delivery") return "Your order is out for delivery.";
+  if (orderStatus === "delivery_failed") return "Delivery was not completed. Please review the latest delivery update.";
+  if (orderStatus === "payment_confirmed" || ["paid", "payment_confirmed"].includes(internalStatus)) return "Payment confirmed and order created.";
+  if (internalStatus === "payment_verification") return "Your payment receipt is awaiting verification.";
+  if (internalStatus === "awaiting_payment") return "Your quote is approved and payment is required.";
+  if (internalStatus === "quote_ready") return "Your pharmacy quote is ready to review.";
+  if (["awaiting_information", "additional_information_required"].includes(internalStatus)) return latestNote || "Hakim Plus needs more information to continue reviewing this request.";
+  if (internalStatus === "submitted") return "Request submitted successfully. The pharmacy will review it.";
+  if (["under_review", "under_pharmacy_review", "contacting_beneficiary", "prescription_verification", "checking_availability"].includes(internalStatus)) return latestNote || "The pharmacy is reviewing your request.";
+  return latestNote || "The pharmacy is reviewing your request.";
 }
 
 function customerRequestFromRow(row) {
   const request = row.request_number ? requestFromRow(row) : { ...row };
   const internalStatus = request.status;
-  const completed = ["completed", "delivered"].includes(internalStatus);
+  const orderStatus = request.order?.status;
+  const completed = ["completed", "delivered"].includes(internalStatus) || ["completed", "delivered"].includes(orderStatus);
   const completionMessage = "Your request is complete and the order has been delivered.";
   const terminalStatus = ["cancelled", "unable_to_fulfill"].includes(internalStatus) ? internalStatus : null;
   const stage = request.order || completed ? "delivery" : ["quote_ready", "awaiting_payment", "payment_verification", "paid", "payment_confirmed"].includes(internalStatus) ? "payment" : internalStatus === "submitted" ? "request_submitted" : "pharmacy_review";
   const stageLabels = { request_submitted: "Request submitted", pharmacy_review: "Pharmacy review", payment: "Payment", delivery: "Delivery", cancelled: "Cancelled", unable_to_fulfill: "Unable to fulfill" };
   const importantStatuses = new Set(["submitted", "quote_ready", "awaiting_payment", "paid", "payment_confirmed", "out_for_delivery", "delivery_failed", "delivered", "completed", "cancelled", "unable_to_fulfill", "awaiting_information", "additional_information_required"]);
   let statusHistory = (request.statusHistory || []).filter((event) => importantStatuses.has(event.status));
+  const cancellationEvent = [...statusHistory].reverse().find((event) => event.status === "cancelled");
+  const cancelledByCustomer = internalStatus === "cancelled" && (request.cancelledByCustomer === true || cancellationEvent?.cancelledBy === "customer" || cancellationEvent?.customerLabel === "Request cancelled" || cancellationEvent?.note === "Cancelled by customer.");
   if (completed && !statusHistory.some((event) => ["completed", "delivered"].includes(event.status))) {
     statusHistory = [...statusHistory, { id: `completed-${request.id}`, status: "completed", customerLabel: "Completed", note: completionMessage, createdAt: request.updatedAt || request.createdAt }];
   }
@@ -364,16 +390,18 @@ function customerRequestFromRow(row) {
   request.trackerStage = stage;
   request.paymentState = paymentState;
   request.completed = completed;
+  request.cancelledByCustomer = cancelledByCustomer;
   request.canCancel = !request.order && !["payment_verification", "paid", "payment_confirmed", "completed", "delivered", "cancelled", "unable_to_fulfill"].includes(internalStatus);
   request.statusHistory = statusHistory;
-  request.latestUpdate = completed ? completionMessage : statusHistory.at(-1)?.note || (stage === "pharmacy_review" ? "The pharmacy is reviewing this request." : stageLabels[stage]);
+  request.statusNote = terminalStatus ? customerRequestUpdate(internalStatus, orderStatus, statusHistory, cancelledByCustomer) : undefined;
+  request.latestUpdate = customerRequestUpdate(internalStatus, orderStatus, statusHistory, cancelledByCustomer);
   return request;
 }
 
 async function getRequestRow(id, ownerId) {
   const rows = ownerId
-    ? await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id} AND r.owner_user_id=${ownerId}`
-    : await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id}`;
+    ? await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id, o.status order_status, EXISTS(SELECT 1 FROM audit_events ae WHERE ae.target_type='medication_request' AND ae.target_id=r.id AND ae.event_type='request.cancelled_by_customer') cancelled_by_customer FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id} AND r.owner_user_id=${ownerId}`
+    : await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id, o.status order_status, EXISTS(SELECT 1 FROM audit_events ae WHERE ae.target_type='medication_request' AND ae.target_id=r.id AND ae.event_type='request.cancelled_by_customer') cancelled_by_customer FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.id=${id}`;
   return rows[0];
 }
 
@@ -715,7 +743,7 @@ export default async function handler(req, res) {
 
     if (path[0] === "medication-requests") {
       if (req.method === "GET" && path.length === 1) {
-        const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.owner_user_id=${user.id} ORDER BY r.created_at DESC`;
+        const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id, o.status order_status, EXISTS(SELECT 1 FROM audit_events ae WHERE ae.target_type='medication_request' AND ae.target_id=r.id AND ae.event_type='request.cancelled_by_customer') cancelled_by_customer FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.owner_user_id=${user.id} ORDER BY r.created_at DESC`;
         let requests = rows.map(requestFromRow);
         const status = url.searchParams.get("status");
         const search = String(url.searchParams.get("search") || "").toLowerCase();
@@ -768,7 +796,7 @@ export default async function handler(req, res) {
         if (downstream?.has_transfer || downstream?.has_payment || downstream?.has_order) return fail(res, 409, "This request can no longer be cancelled because payment or fulfillment has started.");
         const body = await readJson(req);
         const reason = String(body.reason || "").trim().slice(0, 1000) || "Cancelled by customer.";
-        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Cancelled", note: reason, createdAt: new Date().toISOString() };
+        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Cancelled", note: reason, cancelledBy: "customer", createdAt: new Date().toISOString() };
         await sql`UPDATE medication_requests SET status='cancelled', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
         await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE request_id=${requestId} AND status IN ('draft','sent','approved')`;
         await audit(user.id, "request.cancelled_by_customer", "medication_request", requestId, { ownerId: user.id, reason: reason.slice(0, 160) });
@@ -893,7 +921,7 @@ export default async function handler(req, res) {
         if (!reason) return fail(res, 400, "A decline reason is required.");
         const updated = await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE id=${quoteId} AND status='sent' RETURNING id`;
         if (!updated[0]) return fail(res, 409, "Only the current sent quote can be declined.");
-        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Request cancelled", note: reason, createdAt: new Date().toISOString() };
+        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Request cancelled", note: reason, cancelledBy: "customer", createdAt: new Date().toISOString() };
         await sql`UPDATE medication_requests SET status='cancelled', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${rows[0].request_id}`;
         await audit(user.id, "quote.declined", "quote", quoteId, { ownerId: user.id, requestId: rows[0].request_id });
         return send(res, 200, { ok: true });
@@ -1141,7 +1169,7 @@ export default async function handler(req, res) {
           const body = await readJson(req);
           const text = String(path[3] === "request-information" ? body.message : body.reason || "").trim();
           if (!text) return fail(res, 400, path[3] === "request-information" ? "Enter the information the customer should provide." : "A reason is required.");
-          const event = { id: randomUUID(), status, customerLabel: statusLabel(status), note: text, createdAt: new Date().toISOString() };
+          const event = { id: randomUUID(), status, customerLabel: statusLabel(status), note: text, ...(path[3] === "cancel" ? { cancelledBy: "staff" } : {}), createdAt: new Date().toISOString() };
           if (path[3] === "request-information") {
             const message = { id: randomUUID(), senderType: "staff", senderName: user.name || "Hakim Plus Pharmacy", message: text, author: { name: "Hakim Plus" }, createdAt: event.createdAt };
             await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, customer_messages=customer_messages || ${JSON.stringify([message])}::jsonb, updated_at=now() WHERE id=${requestId}`;

@@ -291,6 +291,26 @@ test("Google social sign-in cannot reuse the previous Hakim Plus session", async
   assert.match(authContext, /has\("neon_auth_session_verifier"\)/);
 });
 
+test("password recovery uses the current Neon Auth reset flow", async () => {
+  const api = await source("api/v1/[...path].js");
+  const authClient = await source("src/auth/authClient.js");
+  const authPages = await source("src/pages/AuthPages.jsx");
+  const router = await source("src/router.jsx");
+
+  assert.match(api, /callAuth\(req, "\/request-password-reset"/);
+  assert.doesNotMatch(api, /callAuth\(req, "\/forget-password"/);
+  assert.match(api, /if \(!upstream\.ok\) return fail\(res, 502, "The reset email could not be sent/);
+  assert.match(api, /redirectTo: `\$\{APP_URL\}\/reset-password`/);
+  assert.match(api, /newPassword: form\.password/);
+  assert.match(authClient, /requestPasswordReset: \(email\).*\/api\/v1\/auth\/forgot-password/);
+  assert.match(authClient, /resetPassword: \(payload\).*\/api\/v1\/auth\/reset-password/);
+  assert.match(authPages, /Sending reset link…/);
+  assert.match(authPages, /This password reset link is invalid or incomplete/);
+  assert.match(authPages, /disabled=\{!auth\.configured \|\| busy \|\| !token \|\| Boolean\(resetLinkError\)\}/);
+  assert.match(router, /path="\/forgot-password"/);
+  assert.match(router, /path="\/reset-password"/);
+});
+
 test("payment confirmation and dispatch use one combined customer email", async () => {
   const api = await source("api/v1/[...path].js");
   const transfers = await source("src/pages/AdminTransfersPage.jsx");

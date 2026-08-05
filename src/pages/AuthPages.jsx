@@ -171,15 +171,20 @@ export function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    setMessage("");
+    setBusy(true);
     try {
       await authClient.requestPasswordReset(email);
       setMessage("If an account exists for this email, a secure reset link has been sent.");
     } catch (submitError) {
       setError(submitError.message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -190,7 +195,7 @@ export function ForgotPasswordPage() {
         <FormError message={error} />
         {message && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" role="status">{message}</p>}
         <Field id="recovery-email" label="Email address" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
-        <button className={primaryButtonClass} type="submit" disabled={!auth.configured}>Send reset link</button>
+        <button className={primaryButtonClass} type="submit" disabled={!auth.configured || busy}>{busy ? "Sending reset link…" : "Send reset link"}</button>
       </form>
     </AuthShell>
   );
@@ -199,19 +204,27 @@ export function ForgotPasswordPage() {
 export function ResetPasswordPage() {
   const auth = useAuth();
   const [searchParams] = useSearchParams();
+  const token = searchParams.get("token") || "";
+  const resetLinkError = searchParams.get("error");
   const [form, setForm] = useState({ password: "", confirmPassword: "" });
-  const [error, setError] = useState("");
+  const [error, setError] = useState(resetLinkError || !token ? "This password reset link is invalid or incomplete. Request a new link from the sign-in page." : "");
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    setMessage("");
+    if (resetLinkError || !token) return setError("This password reset link is invalid or incomplete. Request a new link from the sign-in page.");
     if (form.password !== form.confirmPassword) return setError("Passwords do not match.");
+    setBusy(true);
     try {
-      await authClient.resetPassword({ token: searchParams.get("token"), password: form.password });
+      await authClient.resetPassword({ token, password: form.password });
       setMessage("Your password has been updated. You can now sign in.");
     } catch (submitError) {
       setError(submitError.message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -223,7 +236,7 @@ export function ResetPasswordPage() {
         {message && <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" role="status">{message}</p>}
         <Field id="new-password" label="New password" type="password" autoComplete="new-password" minLength="12" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
         <Field id="new-password-confirmation" label="Confirm new password" type="password" autoComplete="new-password" minLength="12" required value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} />
-        <button className={primaryButtonClass} type="submit" disabled={!auth.configured}>Update password</button>
+        <button className={primaryButtonClass} type="submit" disabled={!auth.configured || busy || !token || Boolean(resetLinkError)}>{busy ? "Updating password…" : "Update password"}</button>
       </form>
     </AuthShell>
   );
