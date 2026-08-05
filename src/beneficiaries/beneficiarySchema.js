@@ -47,9 +47,10 @@ export function validateBeneficiary(input) {
   if (primaryPhoneError) errors.phone = primaryPhoneError;
   if (alternativePhoneError) errors.alternativePhone = alternativePhoneError;
   if (beneficiaryEmailError) errors.email = beneficiaryEmailError;
+  if (!beneficiary.country) errors.country = "Enter the delivery country.";
   if (!beneficiary.city) errors.city = "Enter the delivery city.";
   if (!beneficiary.deliveryAddress) errors.deliveryAddress = "Enter a delivery address.";
-  if (!beneficiary.dateOfBirth && !beneficiary.age) errors.age = "Provide a date of birth or approximate age.";
+  if (!beneficiary.age) errors.age = "Enter the beneficiary's approximate age.";
   if (beneficiary.age && (!/^\d{1,3}$/.test(String(beneficiary.age)) || Number(beneficiary.age) > 130)) errors.age = "Enter a valid age.";
   if (!beneficiary.contactConsent) errors.contactConsent = "Contact authorization is required to save this beneficiary.";
 

@@ -19,7 +19,6 @@ export const emptyMedicationRequest = {
   preferredContactMethod: "email",
   preferredDeliveryTiming: "",
   urgent: false,
-  accuracyConfirmed: false,
 };
 
 export function validateRequestStep(request, step) {
@@ -34,7 +33,6 @@ export function validateRequestStep(request, step) {
     });
   }
   if (step >= 2 && request.method === "description" && request.description.trim().length < 10) errors.description = "Describe what the beneficiary needs in at least 10 characters.";
-  if (step >= 4 && !request.accuracyConfirmed) errors.accuracyConfirmed = "Confirm that the information is accurate before submitting.";
   return errors;
 }
 
@@ -57,6 +55,6 @@ export function createRequestPayload(request, uploadedFiles) {
     preferredContactMethod: request.preferredContactMethod,
     preferredDeliveryTiming: request.preferredDeliveryTiming.trim(),
     urgent: request.urgent,
-    accuracyConfirmed: request.accuracyConfirmed,
+    accuracyConfirmed: true,
   };
 }

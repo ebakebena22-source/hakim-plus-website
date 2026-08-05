@@ -316,7 +316,8 @@ test("customer dashboard loads live portal data instead of placeholder counts", 
   assert.doesNotMatch(portal, /\[\['Beneficiaries', '0'\]/);
   assert.match(portal, /const actionRequests = state\.requests\.filter\(\(request\) => \["quote_available", "required"\]\.includes\(request\.paymentState\)\)/);
   assert.match(portal, /Review quotes and payments/);
-  assert.match(portal, /No quotes or payments need action/);
+  assert.match(portal, /No action required/);
+  assert.doesNotMatch(portal, /No quotes or payments need action/);
   assert.doesNotMatch(portal, /actionRequests\.length \+ unreadNotifications\.length/);
   assert.match(portal, /unread notification/);
   assert.match(portal, /to="\/dashboard\/notifications">View all/);
@@ -327,6 +328,34 @@ test("customer dashboard loads live portal data instead of placeholder counts", 
   const requestPage = await source("src/pages/RequestPages.jsx");
   assert.match(requestPage, /useSearchParams/);
   assert.match(requestPage, /requestsApi\.list\(\{ status: initialFilter \}\)/);
+});
+
+test("customer request and beneficiary forms use the simplified wording and fields", async () => {
+  const wizard = await source("src/pages/RequestWizardPage.jsx");
+  const requestSchema = await source("src/requests/requestSchema.js");
+  const beneficiaryPage = await source("src/pages/BeneficiaryPages.jsx");
+  const beneficiarySchema = await source("src/beneficiaries/beneficiarySchema.js");
+
+  for (const removedCopy of [
+    "Do not rely on this field for emergency care or automated diagnosis.",
+    "Hakim Plus is not an emergency medical service. For medical emergencies, seek appropriate emergency care.",
+    "Accuracy confirmation",
+    "The server must record the customer ID",
+  ]) assert.ok(!`${wizard}\n${beneficiaryPage}`.includes(removedCopy), `removed copy is still shown: ${removedCopy}`);
+  assert.match(wizard, /By submitting this request, I confirm that the information I provided is accurate to the best of my knowledge\./);
+  assert.doesNotMatch(wizard, /request\.accuracyConfirmed/);
+  assert.match(requestSchema, /accuracyConfirmed: true/);
+  assert.doesNotMatch(requestSchema, /errors\.accuracyConfirmed/);
+
+  for (const removedField of ["dateOfBirth", "subCity", "woreda", "neighborhood", "landmark", "deliveryInstructions"]) {
+    assert.ok(!beneficiaryPage.includes(`id="${removedField}"`), `beneficiary form still asks for ${removedField}`);
+  }
+  assert.match(beneficiaryPage, /id="age" label="Approximate age"[^>]+required/);
+  assert.match(beneficiaryPage, /id="phone" label="Phone number"[^>]+required/);
+  assert.match(beneficiaryPage, /Section title="Delivery location"/);
+  for (const field of ["country", "city", "deliveryAddress"]) assert.ok(beneficiaryPage.includes(`id="${field}"`), `missing delivery field: ${field}`);
+  assert.match(beneficiarySchema, /if \(!beneficiary\.country\) errors\.country/);
+  assert.match(beneficiarySchema, /if \(!beneficiary\.age\) errors\.age/);
 });
 
 test("signup establishes a session when Neon does not require verification", async () => {
