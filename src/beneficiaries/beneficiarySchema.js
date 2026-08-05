@@ -40,7 +40,6 @@ export function validateBeneficiary(input) {
   const errors = {};
 
   if (!beneficiary.fullName) errors.fullName = "Enter the beneficiary's full name.";
-  if (!beneficiary.relationship) errors.relationship = "Select or enter the relationship.";
   const primaryPhoneError = phoneError(beneficiary.phone);
   const alternativePhoneError = phoneError(beneficiary.alternativePhone, { required: false });
   const beneficiaryEmailError = emailError(beneficiary.email, { required: false });

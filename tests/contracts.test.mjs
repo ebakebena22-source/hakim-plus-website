@@ -342,20 +342,26 @@ test("customer request and beneficiary forms use the simplified wording and fiel
     "Accuracy confirmation",
     "The server must record the customer ID",
   ]) assert.ok(!`${wizard}\n${beneficiaryPage}`.includes(removedCopy), `removed copy is still shown: ${removedCopy}`);
-  assert.match(wizard, /By submitting this request, I confirm that the information I provided is accurate to the best of my knowledge\./);
+  assert.match(wizard, /By submitting this request, you confirm that the information you provided is accurate to the best of your knowledge\./);
+  assert.doesNotMatch(wizard, /By submitting this request, I confirm/);
   assert.doesNotMatch(wizard, /request\.accuracyConfirmed/);
+  assert.doesNotMatch(wizard, /Preferred contact method|Preferred delivery timing|request\.preferredContactMethod|request\.preferredDeliveryTiming/);
   assert.match(requestSchema, /accuracyConfirmed: true/);
   assert.doesNotMatch(requestSchema, /errors\.accuracyConfirmed/);
+  assert.doesNotMatch(requestSchema, /preferredContactMethod|preferredDeliveryTiming/);
 
   for (const removedField of ["dateOfBirth", "subCity", "woreda", "neighborhood", "landmark", "deliveryInstructions"]) {
     assert.ok(!beneficiaryPage.includes(`id="${removedField}"`), `beneficiary form still asks for ${removedField}`);
   }
   assert.match(beneficiaryPage, /id="age" label="Approximate age"[^>]+required/);
   assert.match(beneficiaryPage, /id="phone" label="Phone number"[^>]+required/);
+  assert.match(beneficiaryPage, /id="relationship" label="Relationship to you \(optional\)"/);
+  assert.doesNotMatch(beneficiaryPage, /id="relationship"[^>]+required/);
   assert.match(beneficiaryPage, /Section title="Delivery location"/);
   for (const field of ["country", "city", "deliveryAddress"]) assert.ok(beneficiaryPage.includes(`id="${field}"`), `missing delivery field: ${field}`);
   assert.match(beneficiarySchema, /if \(!beneficiary\.country\) errors\.country/);
   assert.match(beneficiarySchema, /if \(!beneficiary\.age\) errors\.age/);
+  assert.doesNotMatch(beneficiarySchema, /errors\.relationship/);
 });
 
 test("signup establishes a session when Neon does not require verification", async () => {

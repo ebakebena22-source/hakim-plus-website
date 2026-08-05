@@ -16,8 +16,6 @@ export const emptyMedicationRequest = {
   contactInstructions: "",
   additionalNotes: "",
   additionalFiles: [],
-  preferredContactMethod: "email",
-  preferredDeliveryTiming: "",
   urgent: false,
 };
 
@@ -52,8 +50,6 @@ export function createRequestPayload(request, uploadedFiles) {
     contactInstructions: request.method === "contact" ? request.contactInstructions.trim() : "",
     fileReferences: uploadedFiles,
     additionalNotes: request.additionalNotes.trim(),
-    preferredContactMethod: request.preferredContactMethod,
-    preferredDeliveryTiming: request.preferredDeliveryTiming.trim(),
     urgent: request.urgent,
     accuracyConfirmed: true,
   };
