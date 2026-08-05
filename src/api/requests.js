@@ -12,6 +12,7 @@ export const requestsApi = {
     return apiRequest(`/api/v1/medication-requests?${query.toString()}`);
   },
   get: (id) => apiRequest(`/api/v1/medication-requests/${encodeId(id)}`),
+  cancel: (id, reason = "") => apiRequest(`/api/v1/medication-requests/${encodeId(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }),
   create: (request) =>
     apiRequest("/api/v1/medication-requests", { method: "POST", body: JSON.stringify(request) }),
 };

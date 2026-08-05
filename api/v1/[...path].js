@@ -364,6 +364,7 @@ function customerRequestFromRow(row) {
   request.trackerStage = stage;
   request.paymentState = paymentState;
   request.completed = completed;
+  request.canCancel = !request.order && !["payment_verification", "paid", "payment_confirmed", "completed", "delivered", "cancelled", "unable_to_fulfill"].includes(internalStatus);
   request.statusHistory = statusHistory;
   request.latestUpdate = completed ? completionMessage : statusHistory.at(-1)?.note || (stage === "pharmacy_review" ? "The pharmacy is reviewing this request." : stageLabels[stage]);
   return request;
@@ -759,6 +760,21 @@ export default async function handler(req, res) {
         if (!row) return fail(res, 404, "Medication request not found.");
         return send(res, 200, { request: customerRequestFromRow(row) });
       }
+      if (req.method === "POST" && path[2] === "cancel" && path.length === 3) {
+        const row = await getRequestRow(requestId, user.id);
+        if (!row) return fail(res, 404, "Medication request not found.");
+        if (["payment_verification", "paid", "payment_confirmed", "completed", "delivered", "cancelled", "unable_to_fulfill"].includes(row.status)) return fail(res, 409, "This request can no longer be cancelled online. Contact Hakim Plus if you need help.");
+        const downstream = (await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE request_id=${requestId} AND status IN ('pending','approved')) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order`)[0];
+        if (downstream?.has_transfer || downstream?.has_payment || downstream?.has_order) return fail(res, 409, "This request can no longer be cancelled because payment or fulfillment has started.");
+        const body = await readJson(req);
+        const reason = String(body.reason || "").trim().slice(0, 1000) || "Cancelled by customer.";
+        const event = { id: randomUUID(), status: "cancelled", customerLabel: "Cancelled", note: reason, createdAt: new Date().toISOString() };
+        await sql`UPDATE medication_requests SET status='cancelled', status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
+        await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE request_id=${requestId} AND status IN ('draft','sent','approved')`;
+        await audit(user.id, "request.cancelled_by_customer", "medication_request", requestId, { ownerId: user.id, reason: reason.slice(0, 160) });
+        const updated = await getRequestRow(requestId, user.id);
+        return send(res, 200, { request: customerRequestFromRow(updated) });
+      }
       if (path[2] === "message-attachments" && req.method === "POST" && path.length === 3) {
         const row = await getRequestRow(requestId, user.id);
         if (!row) return fail(res, 404, "Medication request not found.");
@@ -979,7 +995,7 @@ export default async function handler(req, res) {
       if (path[1] === "requests") {
         if (!requireRole(user, res, ["admin", "pharmacist", "customer_support"])) return;
         if (req.method === "GET" && path.length === 2) {
-          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE o.id IS NULL OR o.status NOT IN ('completed','delivered') ORDER BY r.created_at DESC`;
+          const rows = await sql`SELECT r.*, b.data beneficiary_data, p.email customer_email, p.full_name customer_name, p.profile customer_profile, q.id quote_id, q.status quote_status, o.id order_id FROM medication_requests r JOIN beneficiaries b ON b.id=r.beneficiary_id JOIN app_profiles p ON p.user_id=r.owner_user_id LEFT JOIN quotes q ON q.request_id=r.id LEFT JOIN orders o ON o.request_id=r.id WHERE r.status NOT IN ('cancelled','unable_to_fulfill','completed','delivered') AND (o.id IS NULL OR o.status NOT IN ('completed','delivered')) ORDER BY r.created_at DESC`;
           let requests = rows.map((row) => staffRequestFromRow(row, user));
           const queue = url.searchParams.get("queue");
           const search = String(url.searchParams.get("search") || "").toLowerCase();
@@ -1116,6 +1132,11 @@ export default async function handler(req, res) {
         }
         if (req.method === "POST" && ["cancel", "unable-to-fulfill", "request-information"].includes(path[3])) {
           if (path[3] === "request-information" && row.quote_id) return fail(res, 409, "Information requests are closed after a quote is generated.");
+          if (["cancelled", "unable_to_fulfill", "completed", "delivered"].includes(row.status)) return fail(res, 409, "This request is already closed.");
+          if (path[3] === "cancel") {
+            const downstream = (await sql`SELECT EXISTS(SELECT 1 FROM bank_transfers WHERE request_id=${requestId} AND status IN ('pending','approved')) has_transfer, EXISTS(SELECT 1 FROM payments WHERE request_id=${requestId}) has_payment, EXISTS(SELECT 1 FROM orders WHERE request_id=${requestId}) has_order`)[0];
+            if (downstream?.has_transfer || downstream?.has_payment || downstream?.has_order) return fail(res, 409, "This request cannot be cancelled because payment or fulfillment has started.");
+          }
           const status = path[3] === "cancel" ? "cancelled" : path[3] === "unable-to-fulfill" ? "unable_to_fulfill" : "awaiting_information";
           const body = await readJson(req);
           const text = String(path[3] === "request-information" ? body.message : body.reason || "").trim();
@@ -1127,8 +1148,9 @@ export default async function handler(req, res) {
           } else {
             await sql`UPDATE medication_requests SET status=${status}, status_history=status_history || ${JSON.stringify([event])}::jsonb, updated_at=now() WHERE id=${requestId}`;
           }
+          if (path[3] === "cancel") await sql`UPDATE quotes SET status='declined', updated_at=now() WHERE request_id=${requestId} AND status IN ('draft','sent','approved')`;
           await audit(user.id, `request.${path[3]}`, "medication_request", requestId, { ownerId: row.owner_user_id, reason: text.slice(0, 160) });
-          await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request", {
+          await notify(row.owner_user_id, path[3] === "request-information" ? "More information is needed" : path[3] === "cancel" ? "Request cancelled" : "Request status changed", text, `/dashboard/requests/${requestId}`, "View request", {
             fields: [{ label: "Beneficiary", value: row.beneficiary_data?.fullName }, { label: "Status", value: statusLabel(status) }],
             note: text,
             noteLabel: path[3] === "request-information" ? "Information requested" : "Pharmacy update",
@@ -1250,7 +1272,7 @@ export default async function handler(req, res) {
           return fail(res, 409, "Use dispatch, delivery confirmation, or delivery failure to update fulfillment.");
         }
         if (req.method === "POST" && path[3] === "delivery-assignment") {
-          if (!["payment_confirmed", "delivery_failed"].includes(row.status)) return fail(res, 409, "Only a paid or failed delivery can be assigned.");
+          if (!["payment_confirmed", "delivery_failed", "out_for_delivery"].includes(row.status)) return fail(res, 409, "Only an active paid delivery can be assigned or edited.");
           const body = await readJson(req);
           if (!String(body.deliveryPersonId || body.deliveryPersonName || "").trim()) return fail(res, 400, "Enter a delivery person ID or name.");
           const now = new Date().toISOString();

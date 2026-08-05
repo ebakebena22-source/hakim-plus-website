@@ -224,7 +224,8 @@ test("medication requests use five simplified queues and exclude completed deliv
   assert.match(api, /new: \["submitted", "under_review", "under_pharmacy_review"\]/);
   assert.match(api, /queue === "beneficiary_contacted"[^\n]+!item\.quote[^\n]+note\.kind === "beneficiary_contact"/);
   assert.match(api, /queue === "quote_generated"[^\n]+Boolean\(item\.quote\)/);
-  assert.match(api, /WHERE o\.id IS NULL OR o\.status NOT IN \('completed','delivered'\)/);
+  assert.match(api, /r\.status NOT IN \('cancelled','unable_to_fulfill','completed','delivered'\)/);
+  assert.match(api, /o\.id IS NULL OR o\.status NOT IN \('completed','delivered'\)/);
   assert.doesNotMatch(page, /Request information|informationForm|requestInformation/);
   assert.doesNotMatch(adminClient, /requestInformation/);
 });
@@ -417,4 +418,27 @@ test("customer request filters use accurate empty-state guidance", async () => {
   assert.match(requestPage, /const emptyState = appliedSearch/);
   assert.match(requestPage, /emptyState\.actionLabel && <Link/);
   assert.doesNotMatch(requestPage, /You haven&apos;t submitted a medication request yet/);
+});
+
+test("customer and staff request cancellation is functional and safely bounded", async () => {
+  const api = await source("api/v1/[...path].js");
+  const customerClient = await source("src/api/requests.js");
+  const customerPage = await source("src/pages/RequestPages.jsx");
+  const adminPage = await source("src/pages/AdminRequestPages.jsx");
+  const adminClient = await source("src/api/admin.js");
+
+  assert.match(customerClient, /cancel: \(id, reason = ""\)/);
+  assert.match(customerClient, /medication-requests\/\$\{encodeId\(id\)\}\/cancel/);
+  assert.match(customerPage, /request\.canCancel && <section/);
+  assert.match(customerPage, /Cancel this medication request\? This action cannot be undone\./);
+  assert.match(customerPage, /requestsApi\.cancel\(id, cancelReason\.trim\(\)\)/);
+  assert.match(api, /path\[2\] === "cancel"/);
+  assert.match(api, /request\.cancelled_by_customer/);
+  assert.match(api, /This request can no longer be cancelled because payment or fulfillment has started/);
+  assert.match(api, /UPDATE quotes SET status='declined'/);
+  assert.match(api, /path\[3\] === "cancel" \? "Request cancelled"/);
+  assert.match(adminClient, /admin\/requests\/\$\{encodeId\(id\)\}\/cancel/);
+  assert.match(adminPage, /Enter a reason before cancelling the request\./);
+  assert.match(adminPage, /const terminal = \["cancelled", "unable_to_fulfill", "completed", "delivered"\]/);
+  assert.match(adminPage, /terminal && <section[^\n]+Request closed/);
 });

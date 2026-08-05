@@ -49,6 +49,11 @@ test("customer tracking has four stages while fulfillment exposes only delivery 
   assert.match(customerRequests, /Order delivered/);
   assert.match(customerRequests, /View completed order/);
   assert.match(customerRequests, /!request\.completed && <section/);
+  assert.match(adminOrders, /function DeliveryPersonSummary/);
+  assert.match(adminOrders, /Edit delivery person/);
+  assert.match(adminOrders, /Save changes/);
+  assert.match(adminOrders, /order\.deliveryAssignment && !editingAssignment/);
+  assert.match(api, /\["payment_confirmed", "delivery_failed", "out_for_delivery"\]\.includes\(row\.status\)/);
 });
 
 test("customer responses hide internal fulfillment and minor pharmacy events", async () => {
