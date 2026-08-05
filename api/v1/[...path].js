@@ -1308,11 +1308,15 @@ export default async function handler(req, res) {
         if (req.method === "POST" && path[3] === "delivery-confirmation") {
           if (row.status !== "out_for_delivery") return fail(res, 409, "Only an order that is out for delivery can be confirmed delivered.");
           const body = await readJson(req);
-          const proof = await sql`SELECT id FROM protected_files WHERE id=${body.proofReference} AND kind='delivery' AND target_id=${orderId}`;
-          if (!proof[0]) return fail(res, 400, "Upload valid proof of delivery first.");
+          const proofReference = String(body.proofReference || "").trim();
+          if (proofReference) {
+            const proof = await sql`SELECT id FROM protected_files WHERE id=${proofReference} AND kind='delivery' AND target_id=${orderId}`;
+            if (!proof[0]) return fail(res, 400, "The selected proof of delivery is not valid.");
+          }
           const now = new Date().toISOString();
           const note = String(body.deliveryNote || "").trim() || "Delivery confirmed.";
-          const data = { ...(row.data || {}), deliveryStatusLabel: "Completed", deliveredAt: now, completedAt: now, deliveryProofReference: body.proofReference, deliveryNote: note };
+          const data = { ...(row.data || {}), deliveryStatusLabel: "Completed", deliveredAt: now, completedAt: now, deliveryNote: note };
+          if (proofReference) data.deliveryProofReference = proofReference;
           data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "completed", customerLabel: "Completed", note, createdAt: now }];
           data.internalTimeline = [...(data.internalTimeline || []), { id: randomUUID(), label: "Delivery completed", createdAt: now, actor: { name: user.name } }];
           await saveOrderState(row, "completed", data, user.id, "order.completed", "Order completed", note);
@@ -1323,9 +1327,17 @@ export default async function handler(req, res) {
         if (req.method === "POST" && path[3] === "delivery-failure") {
           if (row.status !== "out_for_delivery") return fail(res, 409, "Only an order that is out for delivery can record a delivery failure.");
           const body = await readJson(req);
-          const note = String(body.note || "").trim();
-          if (!note) return fail(res, 400, "A delivery-failure note is required.");
-          const reason = String(body.reason || "other");
+          const allowedReasons = new Set(["beneficiary_unreachable", "address_issue", "delivery_refused", "vehicle_or_route_issue", "other"]);
+          const requestedReason = String(body.reason || "other");
+          const reason = allowedReasons.has(requestedReason) ? requestedReason : "other";
+          const defaultNotes = {
+            beneficiary_unreachable: "We could not reach the beneficiary during delivery. Please contact Hakim Plus to arrange another attempt.",
+            address_issue: "There was an issue with the delivery address. Please contact Hakim Plus to update the delivery details.",
+            delivery_refused: "The delivery could not be completed because it was refused. Please contact Hakim Plus if you need assistance.",
+            vehicle_or_route_issue: "The delivery could not be completed because of a delivery route issue. Hakim Plus will arrange the next step.",
+            other: "The delivery could not be completed. Please contact Hakim Plus for the next step.",
+          };
+          const note = String(body.note || "").trim().slice(0, 1000) || defaultNotes[reason];
           const now = new Date().toISOString();
           const data = { ...(row.data || {}), deliveryStatusLabel: "Delivery failed", lastDeliveryFailure: { reason, note, createdAt: now } };
           data.statusHistory = [...(data.statusHistory || []), { id: randomUUID(), status: "delivery_failed", customerLabel: "Delivery needs attention", note, createdAt: now }];

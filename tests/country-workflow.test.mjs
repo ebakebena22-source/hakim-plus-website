@@ -54,6 +54,14 @@ test("customer tracking has four stages while fulfillment exposes only delivery 
   assert.match(adminOrders, /Save changes/);
   assert.match(adminOrders, /order\.deliveryAssignment && !editingAssignment/);
   assert.match(api, /\["payment_confirmed", "delivery_failed", "out_for_delivery"\]\.includes\(row\.status\)/);
+  assert.match(adminOrders, /Proof of delivery is optional\./);
+  assert.doesNotMatch(adminOrders, /Add proof of delivery before confirming delivery\./);
+  assert.match(api, /if \(proofReference\) \{/);
+  assert.doesNotMatch(api, /Upload valid proof of delivery first\./);
+  assert.match(adminOrders, /onSubmit=\{recordDeliveryFailure\}/);
+  assert.match(adminOrders, /Customer-visible note \(optional\)/);
+  assert.doesNotMatch(adminOrders, /action\.busy \|\| !failure\.note\.trim\(\)/);
+  assert.match(api, /const defaultNotes = \{/);
 });
 
 test("customer responses hide internal fulfillment and minor pharmacy events", async () => {
