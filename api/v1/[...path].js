@@ -75,10 +75,9 @@ async function recordMetaRegistration(req) {
         signal: controller.signal,
       },
     );
-    const metaResult = await metaResponse.text().catch(() => "");
-    console.info("Meta CAPI response", metaResponse.status, metaResult.slice(0, 500));
     if (!metaResponse.ok) {
-      console.warn("Meta CAPI rejected CompleteRegistration", metaResponse.status, metaResult.slice(0, 500));
+      const metaError = await metaResponse.text().catch(() => "");
+      console.warn("Meta CAPI rejected CompleteRegistration", metaResponse.status, metaError.slice(0, 500));
     }
   } catch (error) {
     console.warn("Meta CAPI request failed", error instanceof Error ? error.message : String(error));
