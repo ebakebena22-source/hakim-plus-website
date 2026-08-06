@@ -20,6 +20,10 @@ const BANK = {
 };
 const APP_URL = String(process.env.APP_URL || "https://hakimpluspharmacy.com").replace(/\/$/, "");
 const RESEND_FROM = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_FROM || "Hakim Plus <notifications@hakimpluspharmacy.com>";
+const META_DATASET_ID = String(process.env.META_DATASET_ID || "").trim();
+const META_CAPI_ACCESS_TOKEN = String(process.env.META_CAPI_ACCESS_TOKEN || "").trim();
+const META_CAPI_TEST_EVENT_CODE = String(process.env.META_CAPI_TEST_EVENT_CODE || "").trim();
+const META_GRAPH_API_VERSION = String(process.env.META_GRAPH_API_VERSION || "v23.0").trim();
 
 function send(res, status, payload, headers = {}) {
   res.statusCode = status;
@@ -33,6 +37,50 @@ function fail(res, status, message, errors) {
   return send(res, status, { message, ...(errors ? { errors } : {}) });
 }
 
+
+function requestHeader(req, name) {
+  const value = req.headers?.[name];
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+
+async function recordMetaRegistration(req) {
+  if (!META_DATASET_ID || !META_CAPI_ACCESS_TOKEN) return;
+  const clientIpAddress = requestHeader(req, "x-forwarded-for").split(",")[0].trim() || requestHeader(req, "x-real-ip").trim();
+  const clientUserAgent = requestHeader(req, "user-agent").trim();
+  if (!clientIpAddress || !clientUserAgent) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  try {
+    const payload = {
+      data: [{
+        event_name: "CompleteRegistration",
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: randomUUID(),
+        action_source: "website",
+        event_source_url: `${APP_URL}/signup`,
+        user_data: {
+          client_ip_address: clientIpAddress,
+          client_user_agent: clientUserAgent,
+        },
+      }],
+      ...(META_CAPI_TEST_EVENT_CODE ? { test_event_code: META_CAPI_TEST_EVENT_CODE } : {}),
+    };
+    await fetch(
+      `https://graph.facebook.com/${encodeURIComponent(META_GRAPH_API_VERSION)}/${encodeURIComponent(META_DATASET_ID)}/events?access_token=${encodeURIComponent(META_CAPI_ACCESS_TOKEN)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      },
+    );
+  } catch {
+    // Registration must succeed even when marketing measurement is unavailable.
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 async function readJson(req) {
   if (req.body && typeof req.body === "object") return req.body;
   if (typeof req.body === "string") return JSON.parse(req.body || "{}");
@@ -123,6 +171,8 @@ async function handleAuth(req, res, action) {
       const profileCreated = await upsertProfile(user, { firstName: String(form.firstName).trim(), lastName: String(form.lastName).trim(), phone: String(form.phone || "").trim(), ...countryProfile, legalAcceptedAt: new Date().toISOString(), termsVersion: "2026-08-02", privacyVersion: "2026-08-02" });
       if (profileCreated) await sendWelcomeEmail(user.id);
     }
+
+    await recordMetaRegistration(req);
 
     // Neon Auth can be configured to allow password sign-up without email
     // verification. Its sign-up response does not always include a session in
