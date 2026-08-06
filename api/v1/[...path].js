@@ -50,7 +50,7 @@ async function recordMetaRegistration(req) {
   if (!clientIpAddress || !clientUserAgent) return;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2500);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const payload = {
       data: [{
@@ -66,7 +66,7 @@ async function recordMetaRegistration(req) {
       }],
       ...(META_CAPI_TEST_EVENT_CODE ? { test_event_code: META_CAPI_TEST_EVENT_CODE } : {}),
     };
-    await fetch(
+    const metaResponse = await fetch(
       `https://graph.facebook.com/${encodeURIComponent(META_GRAPH_API_VERSION)}/${encodeURIComponent(META_DATASET_ID)}/events?access_token=${encodeURIComponent(META_CAPI_ACCESS_TOKEN)}`,
       {
         method: "POST",
@@ -75,7 +75,12 @@ async function recordMetaRegistration(req) {
         signal: controller.signal,
       },
     );
-  } catch {
+    if (!metaResponse.ok) {
+      const metaError = await metaResponse.text().catch(() => "");
+      console.warn("Meta CAPI rejected CompleteRegistration", metaResponse.status, metaError.slice(0, 500));
+    }
+  } catch (error) {
+    console.warn("Meta CAPI request failed", error instanceof Error ? error.message : String(error));
     // Registration must succeed even when marketing measurement is unavailable.
   } finally {
     clearTimeout(timeout);
