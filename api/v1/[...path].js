@@ -363,6 +363,13 @@ async function ensureSchema() {
       recipient text NOT NULL, subject text NOT NULL, provider_id text, status text NOT NULL,
       error_message text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
     await sql`CREATE INDEX IF NOT EXISTS email_deliveries_owner_idx ON email_deliveries(owner_user_id, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS diaspora_care_requests (
+      id text PRIMARY KEY, diaspora_phone text NOT NULL, patient_phone text NOT NULL, care_need text NOT NULL,
+      status text NOT NULL DEFAULT 'new', source text NOT NULL DEFAULT 'diaspora-care-landing-page',
+      landing_url text, utm_source text, utm_medium text, utm_campaign text, utm_content text, utm_term text, fbclid text,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`CREATE INDEX IF NOT EXISTS diaspora_care_requests_created_idx ON diaspora_care_requests(created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS diaspora_care_requests_phone_idx ON diaspora_care_requests(diaspora_phone, patient_phone, created_at DESC)`;
   })().catch((error) => { schemaPromise = undefined; throw error; });
   return schemaPromise;
 }
@@ -722,6 +729,114 @@ async function saveOrderState(row, nextStatus, data, actorId, eventType, custome
   return now;
 }
 
+function normalizeCarePhone(value) {
+  const raw = String(value || "").trim();
+  const hasLeadingPlus = raw.startsWith("+");
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 18) return "";
+  return `${hasLeadingPlus ? "+" : ""}${digits}`;
+}
+
+function shortText(value, maxLength) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function safeLandingUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["https:", "http:"].includes(parsed.protocol)) return "";
+    parsed.username = "";
+    parsed.password = "";
+    parsed.hash = "";
+    return parsed.toString().slice(0, 1200);
+  } catch {
+    return "";
+  }
+}
+
+function requestIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "").split(",")[0].trim();
+}
+
+async function sendMetaLead(req, { eventId, landingUrl, fbclid, createdAt }) {
+  const pixelId = String(process.env.META_PIXEL_ID || "").trim();
+  const accessToken = String(process.env.META_CONVERSIONS_API_TOKEN || "").trim();
+  if (!pixelId || !accessToken) return;
+
+  const userData = {};
+  const ip = requestIp(req);
+  const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
+  if (ip) userData.client_ip_address = ip;
+  if (userAgent) userData.client_user_agent = userAgent;
+  if (fbclid) userData.fbc = `fb.1.${createdAt.getTime()}.${fbclid}`;
+
+  const response = await fetch(`https://graph.facebook.com/v22.0/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data: [{
+        event_name: "Lead",
+        event_time: Math.floor(createdAt.getTime() / 1000),
+        event_id: eventId,
+        action_source: "website",
+        event_source_url: landingUrl || `${APP_URL}/diaspora-care`,
+        user_data: userData,
+      }],
+      ...(process.env.META_TEST_EVENT_CODE ? { test_event_code: process.env.META_TEST_EVENT_CODE } : {}),
+    }),
+  });
+  if (!response.ok) throw new Error(`Meta Conversions API returned ${response.status}.`);
+}
+
+async function handleDiasporaCareRequest(req, res) {
+  if (req.method !== "POST") return fail(res, 405, "Method not allowed.");
+  const body = await readJson(req);
+
+  // Quietly accept honeypot submissions without storing or tracking them.
+  if (shortText(body.website, 200)) return send(res, 201, { created: false });
+
+  const diasporaPhone = normalizeCarePhone(body.diasporaPhone);
+  const patientPhone = normalizeCarePhone(body.patientPhone);
+  const careNeed = shortText(body.careNeed, 800);
+  const errors = {};
+  if (!diasporaPhone) errors.diasporaPhone = "የእርስዎን ትክክለኛ ስልክ ቁጥር ያስገቡ።";
+  if (!patientPhone) errors.patientPhone = "የታካሚውን ትክክለኛ ስልክ ቁጥር ያስገቡ።";
+  if (careNeed.length < 5) errors.careNeed = "የሚያስፈልገውን እንክብካቤ በአጭሩ ይጻፉ።";
+  if (Object.keys(errors).length) return fail(res, 400, "የገቡትን መረጃ ያረጋግጡ።", errors);
+
+  const duplicate = await sql`SELECT id FROM diaspora_care_requests
+    WHERE diaspora_phone=${diasporaPhone} AND patient_phone=${patientPhone} AND care_need=${careNeed}
+      AND created_at > now() - interval '15 minutes'
+    ORDER BY created_at DESC LIMIT 1`;
+  if (duplicate[0]) return send(res, 200, { requestId: duplicate[0].id, created: false });
+
+  const id = randomUUID();
+  const eventId = randomUUID();
+  const createdAt = new Date();
+  const landingUrl = safeLandingUrl(body.landingUrl);
+  const attribution = {
+    utmSource: shortText(body.utm_source, 200),
+    utmMedium: shortText(body.utm_medium, 200),
+    utmCampaign: shortText(body.utm_campaign, 200),
+    utmContent: shortText(body.utm_content, 200),
+    utmTerm: shortText(body.utm_term, 200),
+    fbclid: shortText(body.fbclid, 512),
+  };
+
+  await sql`INSERT INTO diaspora_care_requests (
+    id, diaspora_phone, patient_phone, care_need, status, source, landing_url,
+    utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, created_at, updated_at
+  ) VALUES (
+    ${id}, ${diasporaPhone}, ${patientPhone}, ${careNeed}, 'new', 'diaspora-care-landing-page', ${landingUrl},
+    ${attribution.utmSource}, ${attribution.utmMedium}, ${attribution.utmCampaign}, ${attribution.utmContent}, ${attribution.utmTerm}, ${attribution.fbclid}, ${createdAt}, ${createdAt}
+  )`;
+
+  await sendMetaLead(req, { eventId, landingUrl, fbclid: attribution.fbclid, createdAt }).catch((error) => {
+    console.error("Meta Lead delivery failed", error.message);
+  });
+  return send(res, 201, { requestId: id, eventId, created: true });
+}
+
 export default async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
@@ -730,6 +845,7 @@ export default async function handler(req, res) {
     if (path[0] === "health") return send(res, 200, { ok: true, database: Boolean(connectionString), auth: Boolean(authBaseUrl()), privateStorage: Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID), transactionalEmail: Boolean(process.env.RESEND_API_KEY) });
     if (path[0] === "auth") return handleAuth(req, res, path[1]);
     await ensureSchema();
+    if (path[0] === "diaspora-care-requests") return handleDiasporaCareRequest(req, res);
     const isAdminPath = path[0] === "admin";
     const user = await requireUser(req, res, isAdminPath ? ["admin", "pharmacist", "customer_support", "fulfillment", "delivery_operations"] : undefined);
     if (!user) return;

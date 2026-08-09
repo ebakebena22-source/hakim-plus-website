@@ -176,6 +176,27 @@ test("customer past orders and role-aware staff UI use the corrected flows", asy
   assert.match(quotePage, /defaultQuoteExpiry/);
 });
 
+test("diaspora care landing page stores leads before firing Meta conversion", async () => {
+  const html = await source("diaspora-care.html");
+  const hosting = JSON.parse(await source("vercel.json"));
+  const page = await source("src/pages/DiasporaCareLandingPage.jsx");
+  const pixel = await source("src/analytics/metaPixel.js");
+  const api = await source("api/v1/[...path].js");
+  assert.match(html, /lang="am"/);
+  assert.match(html, /diaspora-care-main\.jsx/);
+  assert.ok(hosting.rewrites.some((rewrite) => rewrite.source === "/diaspora-care" && rewrite.destination === "/diaspora-care.html"));
+  assert.match(page, /result\.created && result\.eventId/);
+  assert.match(page, /trackDiasporaCareLead\(result\.eventId\)/);
+  assert.match(pixel, /fbq\("track", "PageView"\)/);
+  assert.match(pixel, /fbq\("track", "Lead", \{\}, \{ eventID: eventId \}\)/);
+  assert.doesNotMatch(pixel, /diasporaPhone|patientPhone|careNeed/);
+  assert.match(api, /CREATE TABLE IF NOT EXISTS diaspora_care_requests/);
+  assert.match(api, /status text NOT NULL DEFAULT 'new'/);
+  assert.match(api, /utm_source text/);
+  assert.match(api, /fbclid text/);
+  assert.match(api, /created_at > now\(\) - interval '15 minutes'/);
+});
+
 test("completed orders have a separate read-only admin archive", async () => {
   const layout = await source("src/layouts/AdminLayout.jsx");
   const router = await source("src/router.jsx");
