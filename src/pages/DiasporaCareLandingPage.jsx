@@ -5,7 +5,9 @@ import BrandLogo from "../components/BrandLogo";
 
 const initialForm = {
   diasporaPhone: "",
+  diasporaName: "",
   patientPhone: "+251 ",
+  patientName: "",
   careNeed: "",
   website: "",
 };
@@ -13,7 +15,9 @@ const initialForm = {
 function validate(form) {
   const errors = {};
   if (!form.diasporaPhone.trim()) errors.diasporaPhone = "የእርስዎን ስልክ ቁጥር ያስገቡ።";
+  if (!form.diasporaName.trim()) errors.diasporaName = "የእርስዎን ስም ያስገቡ።";
   if (!form.patientPhone.trim() || form.patientPhone.trim() === "+251") errors.patientPhone = "የታካሚውን ስልክ ቁጥር ያስገቡ።";
+  if (!form.patientName.trim()) errors.patientName = "የታካሚውን ስም ያስገቡ።";
   if (!form.careNeed.trim()) errors.careNeed = "የሚያስፈልገውን እንክብካቤ በአጭሩ ይጻፉ።";
   return errors;
 }
@@ -101,10 +105,22 @@ export default function DiasporaCareLandingPage() {
               </div>
 
               <div>
+                <label className="block text-sm font-bold text-slate-800" htmlFor="diaspora-name">የእርስዎ ስም</label>
+                <input id="diaspora-name" className={inputClass} type="text" autoComplete="name" maxLength="120" value={form.diasporaName} onChange={(event) => update("diasporaName", event.target.value)} aria-invalid={Boolean(errors.diasporaName)} aria-describedby={errors.diasporaName ? "diaspora-name-error" : undefined} required />
+                <FieldError id="diaspora-name-error">{errors.diasporaName}</FieldError>
+              </div>
+
+              <div>
                 <label className="block text-sm font-bold text-slate-800" htmlFor="patient-phone">የታካሚው ስልክ ቁጥር</label>
                 <p className="mt-1 text-xs leading-5 text-slate-500">ኢትዮጵያ ውስጥ ያለው የቤተሰብዎ ስልክ ቁጥር</p>
                 <input id="patient-phone" className={inputClass} type="tel" inputMode="tel" autoComplete="tel" value={form.patientPhone} onChange={(event) => update("patientPhone", event.target.value)} aria-invalid={Boolean(errors.patientPhone)} aria-describedby={errors.patientPhone ? "patient-phone-error" : undefined} required />
                 <FieldError id="patient-phone-error">{errors.patientPhone}</FieldError>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-800" htmlFor="patient-name">የታካሚው ስም</label>
+                <input id="patient-name" className={inputClass} type="text" autoComplete="off" maxLength="120" value={form.patientName} onChange={(event) => update("patientName", event.target.value)} aria-invalid={Boolean(errors.patientName)} aria-describedby={errors.patientName ? "patient-name-error" : undefined} required />
+                <FieldError id="patient-name-error">{errors.patientName}</FieldError>
               </div>
 
               <div>

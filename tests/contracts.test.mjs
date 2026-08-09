@@ -188,6 +188,10 @@ test("diaspora care landing page stores leads before firing Meta conversion", as
   assert.match(html, /diaspora-care-main\.jsx/);
   assert.ok(hosting.rewrites.some((rewrite) => rewrite.source === "/diaspora-care" && rewrite.destination === "/diaspora-care.html"));
   assert.match(page, /submissionInFlightRef\.current/);
+  assert.match(page, /diasporaName: ""/);
+  assert.match(page, /patientName: ""/);
+  assert.match(page, /htmlFor="diaspora-name">የእርስዎ ስም/);
+  assert.match(page, /htmlFor="patient-name">የታካሚው ስም/);
   assert.match(page, /result\.created && !leadTrackedRef\.current/);
   assert.match(page, /leadTrackedRef\.current = true/);
   assert.match(page, /trackDiasporaCareLead\(\)/);
@@ -199,6 +203,10 @@ test("diaspora care landing page stores leads before firing Meta conversion", as
   assert.ok(page.indexOf("trackDiasporaCareLead()") < page.indexOf('setState({ status: "success"'));
   assert.match(api, /CREATE TABLE IF NOT EXISTS diaspora_care_requests/);
   assert.match(api, /status text NOT NULL DEFAULT 'new'/);
+  assert.match(api, /diaspora_name text NOT NULL DEFAULT ''/);
+  assert.match(api, /patient_name text NOT NULL DEFAULT ''/);
+  assert.match(api, /diasporaName = shortText\(body\.diasporaName, 120\)/);
+  assert.match(api, /patientName = shortText\(body\.patientName, 120\)/);
   assert.match(api, /utm_source text/);
   assert.match(api, /fbclid text/);
   assert.match(api, /created_at > now\(\) - interval '15 minutes'/);

@@ -364,10 +364,13 @@ async function ensureSchema() {
       error_message text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
     await sql`CREATE INDEX IF NOT EXISTS email_deliveries_owner_idx ON email_deliveries(owner_user_id, created_at DESC)`;
     await sql`CREATE TABLE IF NOT EXISTS diaspora_care_requests (
-      id text PRIMARY KEY, diaspora_phone text NOT NULL, patient_phone text NOT NULL, care_need text NOT NULL,
+      id text PRIMARY KEY, diaspora_phone text NOT NULL, diaspora_name text NOT NULL DEFAULT '',
+      patient_phone text NOT NULL, patient_name text NOT NULL DEFAULT '', care_need text NOT NULL,
       status text NOT NULL DEFAULT 'new', source text NOT NULL DEFAULT 'diaspora-care-landing-page',
       landing_url text, utm_source text, utm_medium text, utm_campaign text, utm_content text, utm_term text, fbclid text,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`;
+    await sql`ALTER TABLE diaspora_care_requests ADD COLUMN IF NOT EXISTS diaspora_name text NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE diaspora_care_requests ADD COLUMN IF NOT EXISTS patient_name text NOT NULL DEFAULT ''`;
     await sql`CREATE INDEX IF NOT EXISTS diaspora_care_requests_created_idx ON diaspora_care_requests(created_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS diaspora_care_requests_phone_idx ON diaspora_care_requests(diaspora_phone, patient_phone, created_at DESC)`;
   })().catch((error) => { schemaPromise = undefined; throw error; });
@@ -762,11 +765,15 @@ async function handleDiasporaCareRequest(req, res) {
   if (shortText(body.website, 200)) return send(res, 201, { created: false });
 
   const diasporaPhone = normalizeCarePhone(body.diasporaPhone);
+  const diasporaName = shortText(body.diasporaName, 120);
   const patientPhone = normalizeCarePhone(body.patientPhone);
+  const patientName = shortText(body.patientName, 120);
   const careNeed = shortText(body.careNeed, 800);
   const errors = {};
   if (!diasporaPhone) errors.diasporaPhone = "የእርስዎን ትክክለኛ ስልክ ቁጥር ያስገቡ።";
+  if (!diasporaName) errors.diasporaName = "የእርስዎን ስም ያስገቡ።";
   if (!patientPhone) errors.patientPhone = "የታካሚውን ትክክለኛ ስልክ ቁጥር ያስገቡ።";
+  if (!patientName) errors.patientName = "የታካሚውን ስም ያስገቡ።";
   if (careNeed.length < 5) errors.careNeed = "የሚያስፈልገውን እንክብካቤ በአጭሩ ይጻፉ።";
   if (Object.keys(errors).length) return fail(res, 400, "የገቡትን መረጃ ያረጋግጡ።", errors);
 
@@ -789,10 +796,10 @@ async function handleDiasporaCareRequest(req, res) {
   };
 
   await sql`INSERT INTO diaspora_care_requests (
-    id, diaspora_phone, patient_phone, care_need, status, source, landing_url,
+    id, diaspora_phone, diaspora_name, patient_phone, patient_name, care_need, status, source, landing_url,
     utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, created_at, updated_at
   ) VALUES (
-    ${id}, ${diasporaPhone}, ${patientPhone}, ${careNeed}, 'new', 'diaspora-care-landing-page', ${landingUrl},
+    ${id}, ${diasporaPhone}, ${diasporaName}, ${patientPhone}, ${patientName}, ${careNeed}, 'new', 'diaspora-care-landing-page', ${landingUrl},
     ${attribution.utmSource}, ${attribution.utmMedium}, ${attribution.utmCampaign}, ${attribution.utmContent}, ${attribution.utmTerm}, ${attribution.fbclid}, ${createdAt}, ${createdAt}
   )`;
 
