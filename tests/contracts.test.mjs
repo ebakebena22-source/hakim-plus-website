@@ -183,11 +183,12 @@ test("diaspora care landing page stores leads before firing Meta conversion", as
   const pixel = await source("src/analytics/metaPixel.js");
   const api = await source("api/v1/[...path].js");
   assert.match(html, /lang="am"/);
+  assert.match(html, /fbq\('init', '1373925271368489'\)/);
+  assert.match(html, /fbq\('track', 'PageView'\)/);
   assert.match(html, /diaspora-care-main\.jsx/);
   assert.ok(hosting.rewrites.some((rewrite) => rewrite.source === "/diaspora-care" && rewrite.destination === "/diaspora-care.html"));
   assert.match(page, /result\.created && result\.eventId/);
   assert.match(page, /trackDiasporaCareLead\(result\.eventId\)/);
-  assert.match(pixel, /fbq\("track", "PageView"\)/);
   assert.match(pixel, /fbq\("track", "Lead", \{\}, \{ eventID: eventId \}\)/);
   assert.doesNotMatch(pixel, /diasporaPhone|patientPhone|careNeed/);
   assert.match(api, /CREATE TABLE IF NOT EXISTS diaspora_care_requests/);

@@ -759,7 +759,7 @@ function requestIp(req) {
 }
 
 async function sendMetaLead(req, { eventId, landingUrl, fbclid, createdAt }) {
-  const pixelId = String(process.env.META_PIXEL_ID || "").trim();
+  const pixelId = "1373925271368489";
   const accessToken = String(process.env.META_CONVERSIONS_API_TOKEN || "").trim();
   if (!pixelId || !accessToken) return;
 

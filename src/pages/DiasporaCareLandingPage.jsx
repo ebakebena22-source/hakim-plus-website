@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { trackDiasporaCareLead, trackDiasporaCarePageView } from "../analytics/metaPixel";
+import { trackDiasporaCareLead } from "../analytics/metaPixel";
 import { createDiasporaCareRequest, landingAttribution } from "../api/diasporaCare";
 import BrandLogo from "../components/BrandLogo";
 
@@ -32,7 +32,6 @@ export default function DiasporaCareLandingPage() {
   useEffect(() => {
     document.documentElement.lang = "am";
     document.title = "Hakim+ Diaspora Care";
-    trackDiasporaCarePageView();
     return () => {
       document.documentElement.lang = "en";
       document.title = "Hakim Plus Pharmacy";

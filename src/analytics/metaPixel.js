@@ -1,11 +1,15 @@
-const META_PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID || "1614464439742591";
+const META_PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID || "1373925271368489";
 
 let initialized = false;
-let pageViewTracked = false;
 
 function initializeMetaPixel() {
   if (initialized) return true;
   if (typeof window === "undefined" || !META_PIXEL_ID) return false;
+
+  if (typeof window.fbq === "function") {
+    initialized = true;
+    return true;
+  }
 
   if (!window.fbq) {
     const fbq = function (...args) {
@@ -30,12 +34,6 @@ function initializeMetaPixel() {
   window.fbq("init", META_PIXEL_ID);
   initialized = true;
   return true;
-}
-
-export function trackDiasporaCarePageView() {
-  if (pageViewTracked || !initializeMetaPixel()) return;
-  window.fbq("track", "PageView");
-  pageViewTracked = true;
 }
 
 export function trackDiasporaCareLead(eventId) {
