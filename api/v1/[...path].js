@@ -754,40 +754,6 @@ function safeLandingUrl(value) {
   }
 }
 
-function requestIp(req) {
-  return String(req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "").split(",")[0].trim();
-}
-
-async function sendMetaLead(req, { eventId, landingUrl, fbclid, createdAt }) {
-  const pixelId = "1373925271368489";
-  const accessToken = String(process.env.META_CONVERSIONS_API_TOKEN || "").trim();
-  if (!pixelId || !accessToken) return;
-
-  const userData = {};
-  const ip = requestIp(req);
-  const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
-  if (ip) userData.client_ip_address = ip;
-  if (userAgent) userData.client_user_agent = userAgent;
-  if (fbclid) userData.fbc = `fb.1.${createdAt.getTime()}.${fbclid}`;
-
-  const response = await fetch(`https://graph.facebook.com/v22.0/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      data: [{
-        event_name: "Lead",
-        event_time: Math.floor(createdAt.getTime() / 1000),
-        event_id: eventId,
-        action_source: "website",
-        event_source_url: landingUrl || `${APP_URL}/diaspora-care`,
-        user_data: userData,
-      }],
-      ...(process.env.META_TEST_EVENT_CODE ? { test_event_code: process.env.META_TEST_EVENT_CODE } : {}),
-    }),
-  });
-  if (!response.ok) throw new Error(`Meta Conversions API returned ${response.status}.`);
-}
-
 async function handleDiasporaCareRequest(req, res) {
   if (req.method !== "POST") return fail(res, 405, "Method not allowed.");
   const body = await readJson(req);
@@ -811,7 +777,6 @@ async function handleDiasporaCareRequest(req, res) {
   if (duplicate[0]) return send(res, 200, { requestId: duplicate[0].id, created: false });
 
   const id = randomUUID();
-  const eventId = randomUUID();
   const createdAt = new Date();
   const landingUrl = safeLandingUrl(body.landingUrl);
   const attribution = {
@@ -831,10 +796,7 @@ async function handleDiasporaCareRequest(req, res) {
     ${attribution.utmSource}, ${attribution.utmMedium}, ${attribution.utmCampaign}, ${attribution.utmContent}, ${attribution.utmTerm}, ${attribution.fbclid}, ${createdAt}, ${createdAt}
   )`;
 
-  await sendMetaLead(req, { eventId, landingUrl, fbclid: attribution.fbclid, createdAt }).catch((error) => {
-    console.error("Meta Lead delivery failed", error.message);
-  });
-  return send(res, 201, { requestId: id, eventId, created: true });
+  return send(res, 201, { requestId: id, created: true });
 }
 
 export default async function handler(req, res) {

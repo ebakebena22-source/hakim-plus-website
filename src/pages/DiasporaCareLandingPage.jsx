@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trackDiasporaCareLead } from "../analytics/metaPixel";
 import { createDiasporaCareRequest, landingAttribution } from "../api/diasporaCare";
 import BrandLogo from "../components/BrandLogo";
@@ -27,6 +27,8 @@ export default function DiasporaCareLandingPage() {
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
   const [state, setState] = useState({ status: "idle", message: "" });
+  const submissionInFlightRef = useRef(false);
+  const leadTrackedRef = useRef(false);
   const attribution = useMemo(() => landingAttribution(), []);
 
   useEffect(() => {
@@ -45,17 +47,22 @@ export default function DiasporaCareLandingPage() {
 
   async function submit(event) {
     event.preventDefault();
-    if (state.status === "sending") return;
+    if (submissionInFlightRef.current) return;
     const nextErrors = validate(form);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
+    submissionInFlightRef.current = true;
     setState({ status: "sending", message: "" });
     try {
       const result = await createDiasporaCareRequest({ ...form, ...attribution });
-      if (result.created && result.eventId) trackDiasporaCareLead(result.eventId);
+      if (result.created && !leadTrackedRef.current) {
+        leadTrackedRef.current = true;
+        trackDiasporaCareLead();
+      }
       setState({ status: "success", message: "" });
     } catch (error) {
+      submissionInFlightRef.current = false;
       setErrors(error?.details || {});
       setState({ status: "error", message: "ጥያቄዎን መላክ አልተቻለም። እንደገና ይሞክሩ።" });
     }
