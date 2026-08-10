@@ -40,10 +40,13 @@ test("public shell contains no third-party behavioral tracking", async () => {
   assert.match(landing, /hasActiveSession \? "Go to dashboard" : "Start with this option"/);
 });
 
-test("Vercel Web Analytics is mounted once at the application root", async () => {
+test("Vercel Web Analytics is mounted once in every application entry point", async () => {
   const main = await source("src/main.jsx");
-  assert.match(main, /import \{ Analytics \} from ['"]@vercel\/analytics\/react['"]/);
-  assert.equal((main.match(/<Analytics\s*\/>/g) || []).length, 1);
+  const diasporaCareMain = await source("src/diaspora-care-main.jsx");
+  for (const entryPoint of [main, diasporaCareMain]) {
+    assert.match(entryPoint, /import \{ Analytics \} from ['"]@vercel\/analytics\/react['"]/);
+    assert.equal((entryPoint.match(/<Analytics\s*\/>/g) || []).length, 1);
+  }
 });
 
 test("the supplied Hakim Plus mark is used for site branding and the browser icon", async () => {
