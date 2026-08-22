@@ -4,6 +4,8 @@ import BrandLogo from "./components/BrandLogo";
 import { WhatsAppIcon } from "./components/SocialIcons";
 import { useAuth } from "./auth/AuthContext";
 
+const SHOW_FOUNDER_SECTION = false;
+
 function Icon({ name, size = 22, className = "" }) {
   const common = {
     width: size,
@@ -872,7 +874,7 @@ export default function DiasporaPharmacyLandingPage() {
 
       
 
-      <section id="founder" className="bg-white px-5 py-16 md:py-24">
+      {SHOW_FOUNDER_SECTION && <section id="founder" className="bg-white px-5 py-16 md:py-24">
         <div className="mx-auto grid max-w-7xl items-center gap-14 md:grid-cols-2">
           <motion.div
             initial="hidden"
@@ -919,7 +921,7 @@ export default function DiasporaPharmacyLandingPage() {
             </div>
           </motion.div>
         </div>
-      </section>
+      </section>}
 
       <section id="faq" className="relative overflow-hidden bg-white px-5 py-16 md:py-24">
         <div className="absolute right-0 top-0 h-[360px] w-[360px] rounded-full bg-emerald-100/70 blur-3xl" />

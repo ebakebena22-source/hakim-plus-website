@@ -40,6 +40,13 @@ test("public shell contains no third-party behavioral tracking", async () => {
   assert.match(landing, /hasActiveSession \? "Go to dashboard" : "Start with this option"/);
 });
 
+test("homepage founder section is retained but hidden behind a disabled flag", async () => {
+  const landing = await source("src/App.jsx");
+  assert.match(landing, /const SHOW_FOUNDER_SECTION = false/);
+  assert.match(landing, /\{SHOW_FOUNDER_SECTION && <section id="founder"/);
+  assert.match(landing, /Built by a doctor who understands medication access\./);
+});
+
 test("Vercel Web Analytics is mounted once in every application entry point", async () => {
   const main = await source("src/main.jsx");
   const diasporaCareMain = await source("src/diaspora-care-main.jsx");
